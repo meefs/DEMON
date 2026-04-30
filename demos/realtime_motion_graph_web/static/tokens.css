@@ -1,0 +1,86 @@
+/* ============================================================================
+   tokens.css — design tokens for the Daydream Music installation.
+
+   Single source of truth for the look-and-feel. Change a value here and the
+   whole UI re-themes; nothing in style.css should hardcode a color or radius
+   that has a token below.
+
+   Loaded before style.css in index.html so every rule downstream can resolve
+   var(--*) references.
+   ============================================================================ */
+:root {
+
+  /* ── Surfaces ─────────────────────────────────────────────────────── */
+  --bg:            #000000;   /* page background, behind the HUD frame */
+  --frame:         #0d0d14;   /* HUD edge bars + opaque dark surfaces  */
+  --frame-line:    #20202c;   /* dividers between frame and content    */
+  --sheet-bg:      #0a0a12;   /* advanced sheet background             */
+  --input-bg:      #06060b;   /* text inputs, ws-url field             */
+  --overlay-bg:    rgba(6, 6, 12, 0.85);   /* play-button overlay      */
+
+  /* ── Text ─────────────────────────────────────────────────────────── */
+  --text:          #d6d6e0;   /* primary text                          */
+  --text-strong:   #e6e6ee;   /* headings, slider thumbs               */
+  --text-dim:      #6e6e7c;   /* labels, secondary info                */
+
+  /* ── Accent (hot pink, single signature color) ────────────────────────
+     Matches the dominant hue in the artist's relief paintings — same
+     pink as one of the ribbons so the whole UI feels like part of the
+     same family. Touch every slider, button, focus ring, MIDI badge,
+     and the cursor by re-tinting these six tokens. */
+  --accent:         #ff2d8d;
+  --accent-hover:   #ff70b0;
+  --accent-soft:    rgba(255, 45, 141, 0.08);   /* hover backgrounds   */
+  --accent-medium:  rgba(255, 45, 141, 0.18);   /* active backgrounds  */
+  --accent-glow:    rgba(255, 45, 141, 0.45);   /* shadow halos        */
+  --accent-line:    rgba(255, 45, 141, 0.35);   /* gradient endpoints  */
+
+  /* ── Status (distinct from accent so warnings stay legible) ───────── */
+  --warn:          #ffcc00;
+  --critical:      #ff5050;
+
+  /* ── Geometry ─────────────────────────────────────────────────────── */
+  --hud-thickness: clamp(56px, 6vmin, 90px);
+  --radius-sm:     4px;
+  --radius-md:     6px;
+  --radius-lg:     8px;
+
+  /* ── HUD tint ─────────────────────────────────────────────────────────
+     Viewport-edge darkening that anchors the bar zones without drawing a
+     hard line. Applied as a single inset shadow on the stage (in style.css)
+     so there are no seams between bars. Heavier alpha = more "framed";
+     lighter = the whole stage dissolves into the ambient. */
+  --hud-tint-strong: rgba(4, 4, 8, 0.85);
+
+  /* ── Source aspect ────────────────────────────────────────────────────
+     Aspect ratio (W:H) of the centerpiece source video. The focal wrapper
+     is height-bound to the viewport; this token drives its width. The
+     current source (combined.mp4) is 1920×1080 outpainted from a 1440²
+     original, so 16:9. If the source is replaced again, update here.
+     Wrapper extends beyond viewport at very wide values; #install-video-
+     area's overflow:hidden clips it, so extreme ratios just lose the
+     outermost (most-outpainted, most-feathered) side content. */
+  --source-aspect: 1.7778;
+
+  /* ── Focal feather (vertical only) ────────────────────────────────────
+     Soft fade at the focal's top/bottom edges, blending into the bar
+     zones. Horizontal sides are handled by --side-blur-* below, not
+     by this feather, so outpainted pixels are blurred *in place*
+     rather than faded out. */
+  --focal-feather-y: 6%;
+
+  /* ── Side blur (covers up outpainted sides) ────────────────────────────
+     Two backdrop-filter overlays sit on the focal's left and right edges
+     and blur the outpainted pixels in place. Width matches the outpaint
+     extent: with --source-aspect 1.7778 the central 1:1 region is 56% of
+     the wrapper, so each side is (100% - 56%) / 2 ≈ 22%. Each overlay
+     fades to transparent at its inner edge so the blur ramps smoothly to
+     zero at the boundary of the central square. */
+  --side-blur-amount: 60px;
+  --side-blur-width:  22%;
+
+  /* ── Type ─────────────────────────────────────────────────────────── */
+  --font-mono:     "SF Mono", "Monaco", "Consolas", monospace;
+  --tracking-wide: 0.3em;
+  --tracking-bar:  0.4em;
+}

@@ -1,6 +1,13 @@
 MIT License
 
 Copyright (c) 2026 ACEStep
+Copyright (c) 2026 RyanOnTheInside (DEMON additions)
+
+DEMON is a derivative work built on ACE-Step. The original ACE-Step
+copyright is preserved above as required by the MIT license. DEMON's
+additions (streaming pipeline, TensorRT integration, node graph,
+windowed VAE decode, MIDI/web realtime demos, and related work) are
+copyright RyanOnTheInside and released under the same MIT terms.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

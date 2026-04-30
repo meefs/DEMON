@@ -1,0 +1,1017 @@
+/* ============================================================================
+   style.css — Daydream Music installation.
+
+   All colors, radii, and spacing tokens come from tokens.css. Nothing in this
+   file should hardcode a brand color or a magic radius — if a value isn't
+   semantic to the rule (e.g. a thumb's pixel size), it stays inline; if it's
+   part of the design language, it goes through a token. Change tokens.css to
+   re-theme.
+
+   Layout: full-bleed video framed by four HUD edge bars + a slide-in Advanced
+   sheet on the right. No timer, no expiry — runs indefinitely.
+   ============================================================================ */
+
+/* ── Reset + base ────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hidden { display: none !important; }
+
+/* Kiosk cursor hide — always. The OS pointer is replaced by the bulge
+   element below; no element should ever surface a real cursor. The
+   existing body.cursor-idle class still controls bulge inflate/deflate
+   via .cursor-bulge below; here it's just the always-on hide rule. */
+body, body * { cursor: none !important; }
+
+/* Custom cursor — particle constellation + precise click dot.
+   .cursor-cluster   container at body root for cursor.js's particles.
+                     No size of its own; particles position themselves
+                     in viewport coords via translate.
+   .cursor-particle  small amber dot, additively blended so the cluster
+                     reads as light against the video. cursor.js sets
+                     `transform` per frame for spring-driven position.
+   .cursor-dot       precise pointer indicator. Solid amber, no blend
+                     mode, so it's legible over any video brightness.
+                     Stays at the exact pointer position so clicks land
+                     where the user sees the dot.
+   body.cursor-idle deflates both via scale (existing 2s timer). */
+.cursor-cluster {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 99;
+}
+
+.cursor-particle {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  pointer-events: none;
+  background: var(--accent);
+  border-radius: 50%;
+  /* Glow expands with --bloom-amount (kick * bloom_on_kick * ui_mul),
+     driven per frame from app.js. Same idea as the shader bloom on the
+     video, just borrowed into CSS for the UI bits the WebGL canvas
+     can't see. */
+  box-shadow:
+    0 0 calc(6px + var(--bloom-amount, 0) * 50px) var(--accent-glow),
+    0 0 calc(var(--bloom-amount, 0) * 120px) var(--accent-hover);
+  mix-blend-mode: plus-lighter;
+  scale: 1;
+  transition: scale 280ms cubic-bezier(.2, .8, .2, 1);
+  will-change: transform, scale;
+}
+
+.cursor-dot {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  pointer-events: none;
+  background: var(--accent);
+  border-radius: 50%;
+  box-shadow:
+    0 0 calc(6px + var(--bloom-amount, 0) * 40px) var(--accent-hover),
+    0 0 calc(14px + var(--bloom-amount, 0) * 110px) var(--accent-glow);
+  translate: var(--cursor-x, 50vw) var(--cursor-y, 50vh);
+  scale: 1;
+  transition: scale 280ms cubic-bezier(.2, .8, .2, 1);
+  z-index: 100;
+  will-change: translate, scale;
+}
+
+body.cursor-idle .cursor-particle,
+body.cursor-idle .cursor-dot { scale: 0; }
+
+/* ── Performance screen + Play overlay ───────────────────────────────────── */
+#performance {
+  position: fixed;
+  inset: 0;
+}
+
+#start-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--overlay-bg);
+  z-index: 20;
+}
+
+/* Play button — only ever shown once, before the first session starts. */
+.cta-primary {
+  display: inline-block;
+  padding: 16px 48px;
+  min-height: 48px;
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.95em;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 120ms, color 120ms;
+}
+.cta-primary:hover  { background: var(--accent-soft);   color: var(--accent-hover); }
+.cta-primary:active { background: var(--accent-medium); }
+
+/* ============================================================================
+   Stage — full-bleed video framed by four HUD edge bars. In graph mode,
+   when the Advanced drawer is open, the stage's bottom is pushed up so the
+   entire interface (HUD edges, graph, everything) shrinks above the drawer
+   instead of being overlaid by it. The transition matches the drawer slide
+   so the resize lands at the same time the drawer arrives. In video mode
+   (or when the drawer is closed) the stage stays full-bleed.
+   ============================================================================ */
+#install-stage {
+  position: fixed;
+  inset: 0;
+  transition: bottom 320ms cubic-bezier(.2, .7, .2, 1);
+}
+body[data-mode="graph"].drawer-open #install-stage {
+  bottom: var(--drawer-h);
+}
+
+/* Single inset shadow that darkens the viewport perimeter. Reach equals
+   the bar thickness so the focal well stays untouched; corners stack the
+   x and y components and read naturally darker than the midpoints. This
+   replaces per-bar background fills, so there are no seams where bars
+   meet at the corners. */
+#install-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  box-shadow: inset 0 0 var(--hud-thickness) 0 var(--hud-tint-strong);
+}
+
+/* Full-bleed video area — covers the whole stage. z-index 7 puts the
+   whole video subtree (canvas + side-blurs) above the perimeter HUD
+   bars at z-index 6, so the alpha-keyed canvas can paint the subject
+   (and its bloom halo) over the bars. Transparent regions of the
+   canvas (pure black in the source) leave the bars visible behind. */
+#install-video-area {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* Ambient backdrop hidden — background is pure black so the focal
+   square is the only thing the eye locks onto. */
+#install-ambient { display: none; }
+
+/* Focal video wrapper — height-bound, centered horizontally, width
+   driven by --source-aspect so we use as much of the (possibly out-
+   painted) source as the source actually contains. Vertical feather
+   blends top/bottom into the bar zones; horizontal sides are handled
+   by .focal-side-blur below — the outpainted pixels stay visible but
+   are progressively blurred in place. */
+#install-video-area #video-wrap {
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 100%;
+  width: auto;
+  aspect-ratio: var(--source-aspect);
+  z-index: 1;
+  -webkit-mask-image:
+    linear-gradient(to bottom, transparent 0%, black var(--focal-feather-y),
+                    black calc(100% - var(--focal-feather-y)), transparent 100%);
+          mask-image:
+    linear-gradient(to bottom, transparent 0%, black var(--focal-feather-y),
+                    black calc(100% - var(--focal-feather-y)), transparent 100%);
+}
+
+/* Side blur overlays — two strips on the focal's left and right edges
+   that backdrop-blur the outpainted pixels behind them. Each is
+   --side-blur-width wide; the inner edge fades to transparent so the
+   blur ramps smoothly to zero at the boundary of the original 1:1
+   square in the centre. Two separate elements (rather than one with a
+   centre-cut mask) avoids known Chromium issues with combining
+   mask-image and backdrop-filter on a single element. */
+.focal-side-blur {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: var(--side-blur-width);
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(var(--side-blur-amount));
+          backdrop-filter: blur(var(--side-blur-amount));
+}
+/* Non-linear mask: opaque (full blur) for the outer 70% of the overlay,
+   then a quick non-linear falloff in the inner 30% so the outpainted
+   regions are fully obscured rather than fading gradually inward. The
+   curve uses approximated ease-out stops to avoid a visible linear ramp. */
+.focal-side-blur-left {
+  left: 0;
+  -webkit-mask-image: linear-gradient(to right,
+    black 0%,
+    black 70%,
+    rgba(0,0,0,0.85) 80%,
+    rgba(0,0,0,0.55) 88%,
+    rgba(0,0,0,0.20) 95%,
+    transparent 100%);
+          mask-image: linear-gradient(to right,
+    black 0%,
+    black 70%,
+    rgba(0,0,0,0.85) 80%,
+    rgba(0,0,0,0.55) 88%,
+    rgba(0,0,0,0.20) 95%,
+    transparent 100%);
+}
+.focal-side-blur-right {
+  right: 0;
+  -webkit-mask-image: linear-gradient(to right,
+    transparent 0%,
+    rgba(0,0,0,0.20) 5%,
+    rgba(0,0,0,0.55) 12%,
+    rgba(0,0,0,0.85) 20%,
+    black 30%,
+    black 100%);
+          mask-image: linear-gradient(to right,
+    transparent 0%,
+    rgba(0,0,0,0.20) 5%,
+    rgba(0,0,0,0.55) 12%,
+    rgba(0,0,0,0.85) 20%,
+    black 30%,
+    black 100%);
+}
+
+/* Crossfade between video-a and video-b layers (driven by VideoLayer).
+   Source aspect matches the wrapper, so cover/contain are equivalent —
+   cover is kept for resilience if a future video has a different aspect. */
+#video-a, #video-b {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 1.5s ease-in-out;
+}
+
+/* Shader output canvas. Sits above the <video> siblings so the WebGL
+   pipeline's rendered frame is what the audience sees; opaque, so the
+   videos beneath are completely covered while it's up. No z-index on
+   purpose — DOM order is canvas → focal-side-blur, so the backdrop-
+   filter blur strips still sit above the canvas and feather the
+   outpainted gutters of the shader output. Starts at opacity 0 so the
+   raw <video> shows through until the shader pipeline produces its
+   first frame; effects.js adds .effects-ready on the first successful
+   render and the CSS transition crossfades the shader output in,
+   covering the cold-load gap. If effects fail to initialise (no
+   WebGL2, etc.) app.js sets display:none here and the underlying
+   video elements become the permanent fallback. */
+#effects-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0;
+  transition: opacity 500ms ease-out;
+}
+#effects-canvas.effects-ready { opacity: 1; }
+
+/* Legacy HUD canvas always hidden. The graph swaps with the video subtree
+   based on body[data-mode]; default is "graph". */
+#install-video-area #hud { display: none; }
+#install-video-area #graph-wrap { position: absolute; inset: calc(var(--hud-thickness) + 32px); z-index: 2; }
+#install-video-area #graph {
+  width: 100%; height: 100%; display: block;
+  --graph-feather: 28px;
+  -webkit-mask-image:
+    linear-gradient(to right,  transparent 0, black var(--graph-feather), black calc(100% - var(--graph-feather)), transparent 100%),
+    linear-gradient(to bottom, transparent 0, black var(--graph-feather), black calc(100% - var(--graph-feather)), transparent 100%);
+          mask-image:
+    linear-gradient(to right,  transparent 0, black var(--graph-feather), black calc(100% - var(--graph-feather)), transparent 100%),
+    linear-gradient(to bottom, transparent 0, black var(--graph-feather), black calc(100% - var(--graph-feather)), transparent 100%);
+  -webkit-mask-composite: source-in;
+          mask-composite: intersect;
+}
+body:not([data-mode="graph"]) #install-video-area #graph-wrap { display: none; }
+body[data-mode="graph"] #install-video-area #video-wrap,
+body[data-mode="graph"] #install-video-area #effects-canvas,
+body[data-mode="graph"] #install-video-area .focal-side-blur { display: none; }
+
+/* ── HUD edges ───────────────────────────────────────────────────────────── */
+/* Bars are transparent containers for labels + level meters. The viewport
+   edge darkening lives on #install-stage::before instead, so the same
+   ambient image runs continuously through the bar zones. z-index sits
+   above the stage darkening overlay so meters and labels paint cleanly. */
+.install-edge {
+  position: absolute;
+  color: var(--text-dim);
+  font-size: 22px;
+  letter-spacing: var(--tracking-bar);
+  text-transform: uppercase;
+  user-select: none;
+  z-index: 6;
+  --fill: 0;
+}
+.install-edge .install-edge-label {
+  position: absolute;
+  z-index: 2;
+  text-shadow: 0 1px 2px #000;
+}
+/* Thin colored ribbons along each slider edge — see ribbons.js. Sized
+   close to the original 2 px line so they read as a quiet perimeter
+   signal, not a focal element. SVG fills the bar zone and is allowed
+   to bleed slightly into the video gutter for the writhing.
+   vector-effect:non-scaling-stroke so stroke widths are real CSS
+   pixels regardless of viewBox aspect. Stroke-width, opacity, and a
+   soft white halo all grow with --bloom-amount so the perimeter
+   pulses with the shader bloom on the video without drawing
+   attention. White (not amber) — chosen for neutrality so the halo
+   reads as luminance rather than a UI accent color. */
+.install-ribbons {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+  filter: drop-shadow(0 0 calc(1px + var(--bloom-amount, 0) * 10px) rgba(255, 255, 255, 0.55));
+}
+.install-ribbons path {
+  vector-effect: non-scaling-stroke;
+}
+.install-ribbons .ribbon-color {
+  stroke-width: calc(2px + var(--bloom-amount, 0) * 4px);
+  /* Translucent baseline so the saturated artwork palette doesn't
+     compete with the video; brightens to near-full opacity on kick. */
+  opacity: calc(0.6 + var(--bloom-amount, 0) * 0.45);
+}
+.install-edge.install-edge-pulse .install-edge-bar { opacity: 1; }
+.install-edge.install-edge-pulse .install-edge-label {
+  color: var(--text);
+  transition: color 200ms;
+}
+
+/* TOP — fills left → right. Indented by --hud-thickness on each side
+   so the top-left and top-right corners are bare, matching the way
+   the left/right bars stop short of the top/bottom corners. */
+.install-edge-top {
+  top: 0;
+  left: var(--hud-thickness);
+  right: var(--hud-thickness);
+  height: var(--hud-thickness);
+}
+.install-edge-top .install-edge-label { top: 50%; left: 24px; transform: translateY(-50%); }
+.install-edge-top .install-edge-bar {
+  bottom: 0; left: 0; height: 2px; width: 100%;
+  transform-origin: left bottom;
+  /* scaleY pulses the bar's thickness with bloom so it visibly fattens on
+     kick rather than just acquiring a halo. */
+  transform: scaleX(var(--fill)) scaleY(calc(1 + var(--bloom-amount, 0) * 3));
+}
+
+/* LEFT + RIGHT — fill bottom → top. */
+.install-edge-left,
+.install-edge-right {
+  top: var(--hud-thickness); bottom: var(--hud-thickness);
+  width: var(--hud-thickness);
+}
+.install-edge-left  { left: 0;  }
+.install-edge-right { right: 0; }
+
+.install-edge-left  .install-edge-label,
+.install-edge-right .install-edge-label {
+  bottom: 24px; left: 50%; transform: translateX(-50%);
+  writing-mode: vertical-rl; text-orientation: mixed;
+}
+.install-edge-left  .install-edge-bar,
+.install-edge-right .install-edge-bar {
+  bottom: 0; width: 2px; height: 100%;
+  /* scaleX pulses bar thickness on bloom (same idea as the top bar). */
+  transform: scaleY(var(--fill)) scaleX(calc(1 + var(--bloom-amount, 0) * 3));
+}
+.install-edge-left  .install-edge-bar { right: 0; transform-origin: right bottom; }
+.install-edge-right .install-edge-bar { left:  0; transform-origin: left  bottom; }
+
+/* The bottom HUD edge has been replaced by the Advanced drawer — the
+   drawer's handle bar lives at the bottom of the viewport now and serves
+   the same visual role. No `.install-edge-bottom` rule needed. */
+
+/* ============================================================================
+   Buttons — single shared "outline + accent on hover" language. The Seed /
+   Pause / Send buttons inside the drawer all share this look so the whole
+   UI reads as one piece. The drawer handle is its own variant (see below).
+   ============================================================================ */
+.seed-btn,
+.pause-btn,
+.send-prompt-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--frame-line);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-family: var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.seed-btn:hover,
+.pause-btn:hover,
+.send-prompt-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.seed-btn:active,
+.send-prompt-btn:active,
+.pause-btn:active {
+  background: var(--accent-medium);
+  border-color: var(--accent);
+}
+
+.pause-btn {
+  min-width: 36px;
+  min-height: 32px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85em;
+  letter-spacing: 0;
+}
+
+.seed-btn {
+  width: 60px;
+  height: 90px;
+  font-size: 1.3em;
+  letter-spacing: 0;
+}
+
+.send-prompt-btn {
+  padding: 8px 16px;
+  min-height: 36px;
+  font-size: 0.72em;
+  letter-spacing: 0.06em;
+}
+
+/* ============================================================================
+   Advanced drawer — pulls up from the bottom of the viewport, mixer-board
+   layout. The drawer is always present in the DOM; in the closed state a
+   transform pushes the body off the viewport so only the handle bar peeks
+   above the bottom edge. Clicking the handle (or Esc / `o`) toggles open.
+   ============================================================================ */
+:root {
+  --drawer-handle-h: 28px;
+  --drawer-h: clamp(380px, 50vh, 540px);
+}
+
+.install-sheet {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: var(--drawer-h);
+  background: var(--sheet-bg);
+  border-top: 1px solid var(--frame-line);
+  /* Closed: only the handle (top --drawer-handle-h px) is on-screen. */
+  transform: translateY(calc(100% - var(--drawer-handle-h)));
+  transition: transform 320ms cubic-bezier(.2, .7, .2, 1);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+.install-sheet.open { transform: translateY(0); }
+
+/* Drawer handle — full-width bar at the top of the drawer. The only
+   on-screen close affordance, so it's deliberately bigger and more
+   discoverable than the old corner button. Two rounded "grip"
+   indicators flank a small label so the bar reads as a draggable
+   surface even on first sight. */
+.install-drawer-handle {
+  flex-shrink: 0;
+  height: var(--drawer-handle-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 0 18px;
+  background: var(--frame);
+  border: none;
+  border-bottom: 1px solid var(--frame-line);
+  color: var(--text-dim);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.7em;
+  letter-spacing: var(--tracking-bar);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 120ms, background 120ms;
+}
+.install-drawer-handle:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.install-drawer-handle-grip {
+  width: 56px;
+  height: 4px;
+  background: var(--frame-line);
+  border-radius: 2px;
+  transition: background 120ms;
+}
+.install-drawer-handle:hover .install-drawer-handle-grip {
+  background: var(--accent);
+}
+.install-drawer-handle-label {
+  white-space: nowrap;
+}
+
+/* Drawer body — vertical stack: operator strip across the top, then a
+   wrap-flex grid of mixer tiles below. Tiles wrap to the next row before
+   anything overflows horizontally — no sideways scrolling. */
+.install-sheet-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  min-height: 0;
+}
+
+.install-section-operator {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--frame-line);
+}
+.install-section-operator .ws-url-input { width: 220px; }
+
+.mixer-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-content: flex-start;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* A tile is a labeled card that groups related controls. Tiles are sized
+   to their content (no fixed widths beyond what their inner channels and
+   per-tile rules dictate), which lets them wrap densely. */
+.mixer-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--frame-line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.012);
+  flex: 0 0 auto;
+}
+.mixer-tile-label {
+  font-family: var(--font-mono);
+  font-size: 0.6em;
+  letter-spacing: var(--tracking-bar);
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+/* Channels row inside a tile: one horizontal row of fader strips. */
+.mixer-channels {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ============================================================================
+   Channel strips — vertical fader columns inside a tile. The tile provides
+   the card frame; each strip is transparent. There is no Simple/Pro split
+   and no horizontal scrolling — every control is reachable on screen via
+   tile wrapping.
+   ============================================================================ */
+.slider-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  width: 50px;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.slider-label {
+  font-family: var(--font-mono);
+  font-size: 0.55em;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  text-align: center;
+  width: 100%;
+  /* Reserve 2 lines so 1-word + 2-word labels align track tops. */
+  min-height: 2.4em;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.slider-track {
+  position: relative;
+  width: 32px;
+  flex: 1 1 auto;
+  /* Shorter than the original 110px so the slider tiles in the first row
+     leave room for the prompts row beneath them without overflowing the
+     drawer. The thumb + fill scale to whatever height the flex layout
+     allocates, so no other rule needs touching. */
+  min-height: 78px;
+  background: transparent;
+  border-radius: 3px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.slider-track::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0; bottom: 0;
+  width: 5px;
+  transform: translateX(-50%);
+  background: var(--frame-line);
+  border-radius: 3px;
+}
+.slider-fill {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 5px;
+  transform: translateX(-50%);
+  background: linear-gradient(to top, var(--accent-line), var(--accent));
+  border-radius: 3px;
+  pointer-events: none;
+  /* Short transition so chunky MIDI updates (e.g., a hardware knob that
+     emits coarse CC values) read as smooth fader motion. Mouse / wheel
+     drag temporarily disables this via .slider-group.dragging below. */
+  transition: height 70ms linear;
+}
+.slider-thumb {
+  position: absolute;
+  left: 50%;
+  width: 20px;
+  height: 20px;
+  background: var(--text-strong);
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  transform: translate(-50%, 50%);
+  pointer-events: none;
+  box-shadow: 0 0 8px var(--accent-glow);
+  transition: bottom 70ms linear;
+}
+.slider-group.dragging .slider-fill,
+.slider-group.dragging .slider-thumb { transition: none; }
+.slider-group.active .slider-track::before {
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.slider-value {
+  font-family: var(--font-mono);
+  font-size: 0.65em;
+  color: var(--accent);
+}
+
+.slider-group kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 5px;
+  min-height: 18px;
+  background: var(--frame);
+  border: 1px solid var(--frame-line);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.55em;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* DCW (wavelet correction) toggle + mode/wavelet selectors. Lives inside
+   the DCW tile alongside the two DCW faders. */
+.dcw-panel {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  align-items: stretch;
+  gap: 6px;
+  flex: 0 0 auto;
+  width: 130px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+/* Seed tile content — dice button stacked over the value display. */
+.seed-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-top: 4px;
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+/* Prompts tile spans the full drawer width on its own row beneath the
+   fader tiles. flex-basis:100% combined with the parent's flex-wrap means
+   it always pushes to a new line; min-height keeps the row tall enough
+   that the textareas inside have somewhere to grow into (the wrap
+   container uses align-content:flex-start, so rows are content-sized —
+   without a minimum the second row would collapse). */
+.mixer-tile-prompts {
+  flex: 1 1 100%;
+  width: auto;
+  max-width: 100%;
+  min-height: 110px;
+}
+.mixer-tile-prompts #prompt-section { flex: 1 1 auto; }
+.dcw-toggle {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--frame-line);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 0.7em;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.dcw-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.dcw-toggle.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+}
+.dcw-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 0.65em;
+  color: var(--text-dim);
+}
+.dcw-row-label {
+  white-space: nowrap;
+}
+.dcw-select {
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--frame-line);
+  border-radius: var(--radius-sm);
+  padding: 2px 4px;
+  font-family: inherit;
+  font-size: 0.95em;
+  cursor: pointer;
+}
+.dcw-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ============================================================================
+   Inputs — ws-url + prompt textareas share one focus language.
+   ============================================================================ */
+.ws-url-input,
+.prompt-input {
+  background: var(--input-bg);
+  border: 1px solid var(--frame-line);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  border-radius: var(--radius-sm);
+  transition: border-color 120ms, color 120ms;
+}
+.ws-url-input:focus,
+.prompt-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.ws-url-input {
+  padding: 6px 10px;
+  min-height: 32px;
+  font-size: 0.7em;
+  width: 100%;
+}
+
+.prompt-input {
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 0.75em;
+  line-height: 1.4;
+  flex: 1 1 auto;
+  min-height: 0;
+  resize: none;
+}
+
+/* ============================================================================
+   Prompt section — A/B prompts with a blend slider and Send button. Lives
+   inside the Prompts tile.
+   ============================================================================ */
+/* Horizontal layout: [Prompt A] [A blend B] [Prompt B] [Send]. The two
+   textareas split the leftover width evenly; the blend control and Send
+   button stay sized to their content so the textareas keep most of the
+   real estate. No scroll bar — everything fits in the prompts row. */
+#prompt-section {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.prompt-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.prompt-label,
+.blend-label,
+.blend-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+#blend-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  flex: 0 0 auto;
+  min-width: 150px;
+  align-self: center;
+}
+
+.blend-label { font-weight: 600; flex-shrink: 0; }
+.blend-value {
+  color: var(--accent);
+  flex-shrink: 0;
+  min-width: 2.8em;
+  text-align: center;
+}
+
+/* Blend slider — native range input retheme (Webkit + Firefox). */
+#prompt-blend {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: linear-gradient(to right, var(--accent-line), var(--accent));
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+#prompt-blend::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  background: var(--text-strong);
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+#prompt-blend::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: var(--text-strong);
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+/* ============================================================================
+   MIDI badge + diag — operator-only, lives in the operator strip at the
+   top of the Advanced drawer. The badge sits inline with the other
+   operator controls; the diag panel drops to a full-width row beneath
+   them when toggled (it stays hidden by default).
+   ============================================================================ */
+#install-midi-slot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+#midi-status {
+  display: inline-block;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--frame-line);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.65em;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 200ms, color 200ms, background 120ms;
+}
+#midi-status:hover         { border-color: var(--accent);   color: var(--text); background: var(--accent-soft); }
+#midi-status.midi-ok       { border-color: var(--accent);   color: var(--accent); }
+#midi-status.midi-warn     { border-color: var(--warn);     color: var(--warn); }
+#midi-status.midi-error    { border-color: var(--critical); color: var(--critical); }
+
+#midi-diag {
+  flex: 1 1 100%;
+  max-height: 110px;
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--input-bg);
+  border: 1px solid var(--frame-line);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.62em;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+#status-bar {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  background: var(--frame);
+  border: 1px solid var(--frame-line);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.7em;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  z-index: 11;
+  white-space: nowrap;
+}
+
+/* ── Desktop-only keyboard shortcut badges ───────────────────────────────── */
+@media (pointer: coarse) { .desktop-only { display: none !important; } }
+@media (hover: none)     { .desktop-only { display: none !important; } }
+
+/* ── MIDI learn indicator ────────────────────────────────────────────────
+   Right-clicking a slider strip or any [data-midi-learn] button puts that
+   element into "waiting for MIDI" mode. The dashed warning outline pulses
+   between warn-yellow and accent-pink so the operator can tell at a glance
+   which control is armed. The next CC / Note message clears the class. */
+.midi-learning {
+  outline: 2px dashed var(--warn);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+  animation: midi-learn-pulse 0.7s ease-in-out infinite alternate;
+}
+@keyframes midi-learn-pulse {
+  from { outline-color: var(--warn); }
+  to   { outline-color: var(--accent); }
+}

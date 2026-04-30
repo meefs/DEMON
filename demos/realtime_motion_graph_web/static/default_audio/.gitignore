@@ -1,0 +1,6 @@
+# Default source audio files are binary blobs too large for git.
+# Sync them out-of-band (rsync / scp / etc.) — same pattern as the
+# assets/loras dir.  Keep this .gitignore so the directory survives a
+# fresh checkout and the server can find it.
+*
+!.gitignore

@@ -1,0 +1,77 @@
+{
+  "_comment": "Initial settings for the Daydream Music installation. Edit and refresh — no rebuild needed. Slider max/step/pro behavior lives in app.js (SLIDER_META); only the per-control starting value is set here.",
+
+  "ws_url_default": "",
+
+  "engine": {
+    "sde": false,
+    "lora": true,
+    "depth": 8,
+    "vae_window": 6.0,
+    "crop": 0,
+    "steps": 8,
+    "fast_vae": false,
+    "key": "G# minor"
+  },
+
+  "lora_dir": "demos/realtime_motion_graph_web/loras",
+  "loras": [
+    { "file": "daftpunkstyle1200.safetensors", "label": "daft" },
+    { "file": "deathsteap_1.safetensors", "label": "death" }
+  ],
+
+  "prompts": {
+    "a": "heavy dubstep loop, deathstep, afxdump, growl heavy bass distortion",
+    "b": "daft punk style loop, beautiful, four to the floor, angelic",
+    "blend": 0.4
+  },
+
+  "controls": {
+    "denoise": 0.7,
+    "lora_str_1": 0.3,
+    "lora_str_2": 0.5,
+    "hint_strength": 1.4,
+
+    "feedback": 0.0,
+    "shift": 0.5,
+    "noise_share": 0.0,
+    "ode_noise": 0.0,
+
+    "ch_g0": 1.0,
+    "ch_g1": 1.0,
+    "ch_g2": 1.0,
+    "ch_g3": 1.0,
+    "ch_g4": 1.0,
+    "ch_g5": 1.0,
+    "ch_g6": 1.0,
+    "ch_g7": 1.0,
+
+    "ch13": 1.0,
+    "ch14": 1.0,
+    "ch19": 1.0,
+    "ch23": 1.0,
+    "ch29": 1.0,
+    "ch56": 1.0,
+
+    "dcw_enabled": true,
+    "dcw_mode": "double",
+    "dcw_scaler": 0.05,
+    "dcw_high_scaler": 0.02,
+    "dcw_wavelet": "haar"
+  },
+
+  "seed": 0.557,
+  "video_bpm": 134,
+
+  "_effects_help": "Audio-reactive video shader pipeline (parallax + bloom-on-kick). Both effects pulse with the kick envelope computed in app.js; CSS also picks up the kick amplitude (via --bloom-amount) so the perimeter bars and cursor halo glow in sync with the video bloom. ui_bloom_multiplier scales the CSS-side bloom independently of the shader because box-shadow halos read much weaker than additive RGB bloom — bump this to make the bars / cursor pulse harder.",
+  "effects": {
+    "parallax_strength": 0.0,
+    "bloom_on_kick": 0.2,
+    "bloom_threshold": 0.1,
+    "ui_bloom_multiplier": 3.0,
+    "warp_strength": 0.25
+  },
+
+  "_reset_seconds_help": "Idle timeout. After this many seconds of no interaction (pointer, key, or MIDI), every control reverts to the defaults above and the active prompt is re-sent. Set to 0 to disable.",
+  "reset_seconds": 60
+}

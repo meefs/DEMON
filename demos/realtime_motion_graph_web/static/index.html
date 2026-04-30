@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Daydream Music</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="tokens.css?v=10">
+<link rel="stylesheet" href="style.css?v=45">
+<script src="lib/fzstd.min.js" onerror="this.onerror=null; var s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/fzstd@0.1.1/umd/index.min.js'; document.head.appendChild(s);"></script>
+</head>
+<body>
+
+<!-- Performance -->
+<div id="performance" class="screen">
+  <!-- Start overlay -->
+  <div id="start-overlay">
+    <button id="play-btn" class="cta-primary">Play</button>
+  </div>
+  <!-- Installation layout: full-bleed video + 4-edge HUD frame -->
+  <div id="install-stage">
+    <!-- Blurred ambient back layer. Sits at stage level (not inside the
+         inner well) so the same motion runs continuously beneath the HUD
+         bars and the focal square. -->
+    <video id="install-ambient" muted loop playsinline></video>
+    <div id="install-video-area">
+      <!-- Main video (front layer; VideoLayer drives video-a/video-b crossfade) -->
+      <div id="video-wrap">
+        <video id="video-a" muted playsinline></video>
+        <video id="video-b" muted playsinline></video>
+        <!-- Audio-reactive shader output. Sits above the video elements;
+             when WebGL2 isn't available it stays display:none and the
+             plain video elements show through as fallback. -->
+        <canvas id="effects-canvas" aria-hidden="true"></canvas>
+        <!-- Backdrop-filter overlays: two strips covering the outpainted
+             left and right regions, each fading to transparent at its
+             inner edge so the blur ramps smoothly to the central square. -->
+        <div class="focal-side-blur focal-side-blur-left"  aria-hidden="true"></div>
+        <div class="focal-side-blur focal-side-blur-right" aria-hidden="true"></div>
+      </div>
+      <!-- Legacy HUD canvas + graph (kept in DOM for app.js; hidden by CSS) -->
+      <canvas id="hud"></canvas>
+      <div id="graph-wrap">
+        <canvas id="graph"></canvas>
+      </div>
+    </div>
+
+    <!-- HUD edges. The bar fill is the only level indicator visible to the
+         public; numeric values are hidden (operator can read them off the
+         sliders inside the Advanced sheet if needed). -->
+    <div class="install-edge install-edge-top" data-bar="denoise">
+      <span class="install-edge-label">Remix Strength</span>
+      <div class="install-edge-bar"></div>
+    </div>
+    <div class="install-edge install-edge-left" data-bar="lora_str_1">
+      <span class="install-edge-label">Daft Punk Style</span>
+      <div class="install-edge-bar"></div>
+    </div>
+    <div class="install-edge install-edge-right" data-bar="lora_str_2">
+      <span class="install-edge-label">Dubstep Style</span>
+      <div class="install-edge-bar"></div>
+    </div>
+  </div>
+
+  <!-- Advanced drawer: pulls up from the bottom, mixer-board style. The
+       handle bar at the top of the drawer is the only on-screen close
+       affordance (Esc and the `o` key also toggle). All channel strips
+       are visible at once — there is no Simple/Pro split. -->
+  <aside id="install-sheet" class="install-sheet">
+    <button id="install-adv-handle" class="install-drawer-handle"
+            aria-label="Toggle advanced drawer" title="Advanced (o)">
+      <span class="install-drawer-handle-grip" aria-hidden="true"></span>
+      <span class="install-drawer-handle-label">Advanced</span>
+      <span class="install-drawer-handle-grip" aria-hidden="true"></span>
+    </button>
+
+    <div class="install-sheet-body">
+      <!-- Operator strip across the top — connection + transport + MIDI. -->
+      <div class="install-section-operator">
+        <input type="text" id="ws-url" class="ws-url-input" placeholder="ws://host:port">
+        <button id="pause-btn" class="pause-btn" data-midi-learn="pause" title="Pause/Resume (right-click to MIDI-learn)">&#9654;</button>
+        <button id="mode-toggle" class="pause-btn" data-midi-learn="mode_toggle" title="Switch display mode (right-click to MIDI-learn)">GRAPH</button>
+        <!-- MIDI badge + diag are injected here by app.js at startup. -->
+        <div id="install-midi-slot"></div>
+      </div>
+
+      <!-- Tile grid. Tiles wrap to multiple rows on narrow viewports — no
+           horizontal scrolling. Each tile groups related controls. -->
+      <div class="mixer-tiles" id="mixer-tiles">
+
+        <!-- MAIN: the 4 user-facing faders. Hardcoded in HTML so they
+             carry the keyboard-shortcut hints (A/S/D/G). -->
+        <div class="mixer-tile" data-tile="main">
+          <div class="mixer-tile-label">Main</div>
+          <div class="mixer-channels" id="sliders">
+            <div class="slider-group" data-param="denoise">
+              <div class="slider-label">remix strength</div>
+              <div class="slider-track">
+                <div class="slider-fill" style="height: 80%"></div>
+                <div class="slider-thumb" style="bottom: 80%"></div>
+              </div>
+              <div class="slider-value">0.80</div>
+              <kbd class="desktop-only">A + &#9650;&#9660;</kbd>
+            </div>
+            <div class="slider-group" data-param="lora_str_1">
+              <div class="slider-label">daft punk style</div>
+              <div class="slider-track">
+                <div class="slider-fill" style="height: 0%"></div>
+                <div class="slider-thumb" style="bottom: 0%"></div>
+              </div>
+              <div class="slider-value">0.00</div>
+              <kbd class="desktop-only">S + &#9650;&#9660;</kbd>
+            </div>
+            <div class="slider-group" data-param="lora_str_2">
+              <div class="slider-label">dubstep style</div>
+              <div class="slider-track">
+                <div class="slider-fill" style="height: 0%"></div>
+                <div class="slider-thumb" style="bottom: 0%"></div>
+              </div>
+              <div class="slider-value">0.00</div>
+              <kbd class="desktop-only">D + &#9650;&#9660;</kbd>
+            </div>
+            <div class="slider-group" data-param="hint_strength">
+              <div class="slider-label">structure strength</div>
+              <div class="slider-track">
+                <div class="slider-fill" style="height: 70%"></div>
+                <div class="slider-thumb" style="bottom: 70%"></div>
+              </div>
+              <div class="slider-value">1.40</div>
+              <kbd class="desktop-only">G + &#9650;&#9660;</kbd>
+            </div>
+          </div>
+        </div>
+
+        <!-- Engine / Channel Gains / Channels / DCW tiles are inserted
+             here by app.js at startup. -->
+
+        <!-- SEED: not a fader — its own tile with the dice button. -->
+        <div class="mixer-tile mixer-tile-seed" data-tile="seed">
+          <div class="mixer-tile-label">Seed</div>
+          <div class="seed-content">
+            <button id="seed-btn" class="seed-btn" data-midi-learn="seed" title="Randomize seed (right-click to MIDI-learn)">&#x1f3b2;</button>
+            <div class="slider-value" id="seed-value">0.00</div>
+            <kbd class="desktop-only">F</kbd>
+          </div>
+        </div>
+
+        <!-- PROMPTS: A/B textareas, blend, send. -->
+        <div class="mixer-tile mixer-tile-prompts" data-tile="prompts">
+          <div class="mixer-tile-label">Prompts</div>
+          <div id="prompt-section">
+            <div class="prompt-slot">
+              <label class="prompt-label" for="prompt-a">Prompt A</label>
+              <textarea id="prompt-a" class="prompt-input" rows="2">heavy dubstep, deathstep, afxdump, growl heavy bass distortion</textarea>
+            </div>
+            <div id="blend-control">
+              <span class="blend-label">A</span>
+              <input type="range" id="prompt-blend" min="0" max="1" step="0.01" value="0.4">
+              <span class="blend-value" id="blend-value">0.40</span>
+              <span class="blend-label">B</span>
+            </div>
+            <div class="prompt-slot">
+              <label class="prompt-label" for="prompt-b">Prompt B</label>
+              <textarea id="prompt-b" class="prompt-input" rows="2">daft punk style, beautiful, four to the floor, angelic</textarea>
+            </div>
+            <button id="send-prompt" class="send-prompt-btn" data-midi-learn="send_prompt" title="Send prompt (right-click to MIDI-learn)">Send Prompt</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Connection status -->
+  <div id="status-bar" class="hidden"></div>
+</div>
+
+<!-- Custom cursor: a constellation of amber particles in loose orbit
+     plus a precise center dot. cursor.js creates the particles inside
+     the cluster container and runs the spring physics; the dot follows
+     the pointer via CSS vars and is the click target. -->
+<div class="cursor-cluster" aria-hidden="true"></div>
+<div class="cursor-dot" aria-hidden="true"></div>
+
+<script type="module" src="app.js?v=36"></script>
+</body>
+</html>

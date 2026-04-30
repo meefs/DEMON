@@ -1,0 +1,10 @@
+{
+  "name": "Daydream Music",
+  "short_name": "Daydream",
+  "description": "Real-time AI music instrument",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0a0a10",
+  "theme_color": "#0a0a10",
+  "icons": []
+}

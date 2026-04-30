@@ -25,12 +25,24 @@ KEYSCALE_NOTES = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
 KEYSCALE_ACCIDENTALS = ['', '#', 'b', '♯', '♭']  # empty + ASCII sharp/flat + Unicode sharp/flat
 KEYSCALE_MODES = ['major', 'minor']
 
-# Generate all valid keyscales: 7 notes × 5 accidentals × 2 modes = 70 combinations
+# Generate all valid keyscales: 7 notes × 5 accidentals × 2 modes = 70 combinations.
+# This is the permissive acceptance set used for validation; UIs should
+# display the ``COMMON_KEYSCALES`` subset below instead.
 VALID_KEYSCALES = set()
 for note in KEYSCALE_NOTES:
     for acc in KEYSCALE_ACCIDENTALS:
         for mode in KEYSCALE_MODES:
             VALID_KEYSCALES.add(f"{note}{acc} {mode}")
+
+# Curated UI subset: 12 chromatic pitch classes (sharps only) × {major, minor}
+# = 24 entries. Values are a strict subset of ``VALID_KEYSCALES``; the model
+# receives the string verbatim in the prompt, so any ``VALID_KEYSCALES`` entry
+# (including flat spellings / Unicode variants) stays accepted even when the
+# UI only exposes this subset.
+_COMMON_PITCHES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+COMMON_KEYSCALES = [
+    f"{p} {mode}" for p in _COMMON_PITCHES for mode in KEYSCALE_MODES
+]
 
 
 # ==============================================================================

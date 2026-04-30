@@ -176,6 +176,10 @@ SUBMODEL_REGISTRY: Dict[str, str] = {
     "acestep-v15-base": "ACE-Step/acestep-v15-base",
     "acestep-v15-turbo-shift1": "ACE-Step/acestep-v15-turbo-shift1",
     "acestep-v15-turbo-continuous": "ACE-Step/acestep-v15-turbo-continuous",
+    # XL series (4B DiT, v0.1.6)
+    "acestep-v15-xl-base": "ACE-Step/acestep-v15-xl-base",
+    "acestep-v15-xl-sft": "ACE-Step/acestep-v15-xl-sft",
+    "acestep-v15-xl-turbo": "ACE-Step/acestep-v15-xl-turbo",
 }
 
 # Components that come from the main model repo (ACE-Step/Ace-Step1.5)
@@ -192,15 +196,16 @@ DEFAULT_LM_MODEL = "acestep-5Hz-lm-1.7B"
 
 def get_project_root() -> Path:
     """Get the project root directory."""
-    current_file = Path(__file__).resolve()
-    return current_file.parent.parent
+    from acestep.paths import project_root
+    return project_root()
 
 
 def get_checkpoints_dir(custom_dir: Optional[str] = None) -> Path:
     """Get the checkpoints directory path."""
     if custom_dir:
         return Path(custom_dir)
-    return get_project_root() / "checkpoints"
+    from acestep.paths import checkpoints_dir
+    return checkpoints_dir()
 
 
 def check_main_model_exists(checkpoints_dir: Optional[Path] = None) -> bool:

@@ -1,0 +1,366 @@
+{
+  "format": "scope-workflow",
+  "format_version": "1.0",
+  "metadata": {
+    "name": "Untitled Workflow",
+    "created_at": "2026-04-22T18:55:15.978Z",
+    "scope_version": "0.2.2"
+  },
+  "pipelines": [],
+  "graph": {
+    "nodes": [
+      {
+        "id": "output",
+        "type": "sink",
+        "x": 2689.1917466140044,
+        "y": 414.7277649608816,
+        "w": 240,
+        "h": 200
+      },
+      {
+        "id": "audio_model",
+        "type": "node",
+        "node_type_id": "acestep.LoadModel",
+        "params": {
+          "config_path": "acestep-v15-turbo",
+          "device": "cuda",
+          "use_flash_attention": true,
+          "decoder_backend": "tensorrt",
+          "vae_backend": "tensorrt",
+          "project_root": ""
+        },
+        "x": 50,
+        "y": 100,
+        "w": 456,
+        "h": 276
+      },
+      {
+        "id": "audio_source",
+        "type": "node",
+        "node_type_id": "audio.AudioSource",
+        "params": {
+          "file_id": "tests/fixtures/new_order_confusion_60seconds.wav",
+          "duration": 60,
+          "mode": "full",
+          "loop": false,
+          "pacing": "realtime"
+        },
+        "x": 50,
+        "y": 500,
+        "w": 244,
+        "h": 216
+      },
+      {
+        "id": "audio_encode",
+        "type": "node",
+        "node_type_id": "acestep.VAEEncodeAudio",
+        "params": {},
+        "x": 400,
+        "y": 400,
+        "w": 240,
+        "h": 138
+      },
+      {
+        "id": "audio_semantic",
+        "type": "node",
+        "node_type_id": "acestep.SemanticExtract",
+        "params": {},
+        "x": 762.1339260598547,
+        "y": 108.29104582840148,
+        "w": 240,
+        "h": 138
+      },
+      {
+        "id": "audio_text",
+        "type": "node",
+        "node_type_id": "acestep.EncodeText",
+        "params": {
+          "tags": "dubstep heavy bass",
+          "lyrics": "",
+          "task_type": "cover",
+          "bpm": 134,
+          "duration": 60,
+          "key": "G minor",
+          "language": "en"
+        },
+        "x": 731.4962844112746,
+        "y": 613.736582596269,
+        "w": 240,
+        "h": 293
+      },
+      {
+        "id": "audio_cond",
+        "type": "node",
+        "node_type_id": "acestep.EncodeConditioning",
+        "params": {},
+        "x": 1075.9189663517006,
+        "y": 437.9663915767356,
+        "w": 240,
+        "h": 156
+      },
+      {
+        "id": "audio_solver",
+        "type": "node",
+        "node_type_id": "acestep.OdeSolver",
+        "params": {},
+        "x": 1268.3266551073357,
+        "y": 175.0237380591027,
+        "w": 240,
+        "h": 119
+      },
+      {
+        "id": "audio_solver_sde",
+        "type": "node",
+        "node_type_id": "acestep.SdeSolver",
+        "params": {},
+        "x": 1375.8296956185254,
+        "y": -532.5613927043811,
+        "w": 240,
+        "h": 119
+      },
+      {
+        "id": "audio_modulation",
+        "type": "node",
+        "node_type_id": "acestep.Modulation",
+        "params": {
+          "x0_target_strength": 0,
+          "x0_target_gate": 0
+        },
+        "x": 1714.758072467946,
+        "y": -569.745567475127,
+        "w": 507,
+        "h": 266
+      },
+      {
+        "id": "audio_empty_latent",
+        "type": "node",
+        "node_type_id": "acestep.EmptyLatent",
+        "params": {
+          "duration": 60
+        },
+        "x": 791.2655490773485,
+        "y": -573.8840276678163,
+        "w": 240,
+        "h": 119
+      },
+      {
+        "id": "audio_latent_blend",
+        "type": "node",
+        "node_type_id": "acestep.LatentBlend",
+        "params": {
+          "alpha": 0.5
+        },
+        "x": 1280.7298532496086,
+        "y": -348.1425825404717,
+        "w": 240,
+        "h": 156
+      },
+      {
+        "id": "audio_blend_curve",
+        "type": "node",
+        "node_type_id": "acestep.CurveConstant",
+        "params": {
+          "value": 1,
+          "length": 1500
+        },
+        "x": 804.6130966174261,
+        "y": -204.06774319049777,
+        "w": 332,
+        "h": 95
+      },
+      {
+        "id": "audio_stream",
+        "type": "node",
+        "node_type_id": "acestep.StreamDenoise",
+        "params": {
+          "denoise": 0.56,
+          "seed": 42,
+          "shift": 3,
+          "noise_sharing": 0,
+          "pipeline_depth": 4,
+          "steps": 8,
+          "drain": false,
+          "duration": 60,
+          "x0_target_strength": 0
+        },
+        "x": 1552.8844594797515,
+        "y": 424.8209544407836,
+        "w": 356,
+        "h": 427
+      },
+      {
+        "id": "audio_decode",
+        "type": "node",
+        "node_type_id": "acestep.StreamVAEDecode",
+        "params": {
+          "vae_window": 5,
+          "vae_overlap": 0.5,
+          "t_start": 0,
+          "follow_playhead": true,
+          "mse_skip_threshold": 0.001,
+          "prefetch_seconds": 1
+        },
+        "x": 2026.3087289155542,
+        "y": 388.3014280444727,
+        "w": 482,
+        "h": 286
+      }
+    ],
+    "edges": [
+      {
+        "from": "audio_model",
+        "from_port": "vae",
+        "to_node": "audio_encode",
+        "to_port": "vae",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_source",
+        "from_port": "audio",
+        "to_node": "audio_encode",
+        "to_port": "audio",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_model",
+        "from_port": "model",
+        "to_node": "audio_semantic",
+        "to_port": "model",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_encode",
+        "from_port": "latent",
+        "to_node": "audio_semantic",
+        "to_port": "latent",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_model",
+        "from_port": "clip",
+        "to_node": "audio_text",
+        "to_port": "clip",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_model",
+        "from_port": "model",
+        "to_node": "audio_cond",
+        "to_port": "model",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_text",
+        "from_port": "text_embed",
+        "to_node": "audio_cond",
+        "to_port": "text_embed",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_encode",
+        "from_port": "latent",
+        "to_node": "audio_cond",
+        "to_port": "timbre_ref",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_model",
+        "from_port": "model",
+        "to_node": "audio_stream",
+        "to_port": "model",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_solver",
+        "from_port": "solver",
+        "to_node": "audio_stream",
+        "to_port": "solver",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_cond",
+        "from_port": "conditioning",
+        "to_node": "audio_stream",
+        "to_port": "positive",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_encode",
+        "from_port": "latent",
+        "to_node": "audio_stream",
+        "to_port": "source_latent",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_model",
+        "from_port": "vae",
+        "to_node": "audio_decode",
+        "to_port": "vae",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_stream",
+        "from_port": "latent",
+        "to_node": "audio_decode",
+        "to_port": "latent",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_decode",
+        "from_port": "audio",
+        "to_node": "output",
+        "to_port": "audio",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_model",
+        "from_port": "model",
+        "to_node": "audio_empty_latent",
+        "to_port": "model",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_blend_curve",
+        "from_port": "curve",
+        "to_node": "audio_latent_blend",
+        "to_port": "blend_curve",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_empty_latent",
+        "from_port": "latent",
+        "to_node": "audio_latent_blend",
+        "to_port": "latent_a",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_latent_blend",
+        "from_port": "latent",
+        "to_node": "audio_stream",
+        "to_port": "context_latent",
+        "kind": "stream"
+      },
+      {
+        "from": "audio_semantic",
+        "from_port": "latent",
+        "to_node": "audio_latent_blend",
+        "to_port": "latent_b",
+        "kind": "stream"
+      }
+    ],
+    "ui_state": {
+      "node_params": {
+        "audio_stream": {
+          "denoise": 0.56
+        },
+        "audio_text": {
+          "key": "G minor",
+          "tags": "dubstep heavy bass"
+        },
+        "audio_blend_curve": {
+          "value": 1
+        }
+      }
+    }
+  }
+}

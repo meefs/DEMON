@@ -1,6 +1,30 @@
-data/
+/data/
 *.mp3
 *.wav
+*.mp4
+*.mkv
+*.mov
+*.webm
+
+# Model weights, checkpoints, and inference blobs
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.onnxdata
+*.ort
+*.engine
+*.plan
+*.trt
+*.gguf
+*.h5
+*.hdf5
+*.joblib
+*.pb
+*.tflite
+*.mlmodel
+*.mlpackage
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -209,18 +233,22 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-tests/
+_debug_tests/
 checkpoints/
 playground.ipynb
 .history/
 upload_checkpoints.sh
+
+# DEMON-specific
+.claude/
+notes/
+image.png
 checkpoints.7z
 README_old.md
 discord_bot/
 feishu_bot/
 tmp*
 torchinductor_root/
-scripts/
 checkpoints_legacy/
 lora_output/
 datasets/
@@ -230,3 +258,6 @@ issues/
 PortableGit/
 proxy_config.txt
 gradio_outputs/
+trt_engines/*
+notes/*
+test_output/

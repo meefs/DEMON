@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daydream Music — Installation Layout</title>
+<style>
+  :root {
+    --bg: #06060a;
+    --frame: #0d0d14;
+    --frame-line: #20202c;
+    --text: #d6d6e0;
+    --text-dim: #6e6e7c;
+    /* Single warm-amber accent for all three knob bars. The video's
+       rainbow ribbons already saturate every primary; using one quiet
+       accent here keeps the HUD a frame, not another color in the show. */
+    --accent: #ffb000;
+    --thickness: clamp(56px, 6vmin, 90px);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    overflow: hidden;
+  }
+
+  /* Stage = the full viewport. The HUD lives on the screen's edges,
+     not the video's edges. The video sits centered in the middle area. */
+  .stage {
+    position: fixed; inset: 0;
+  }
+
+  /* Center video container — fills the area between the four edge bars. */
+  .video-area {
+    position: absolute;
+    top:    var(--thickness);
+    right:  var(--thickness);
+    bottom: var(--thickness);
+    left:   var(--thickness);
+    background: #000;
+    overflow: hidden;
+  }
+  /* Ambient back layer — same video, scaled up + heavily blurred to fill
+     the side gutters with motion-matched ambience. Cropped on purpose. */
+  .video-area .ambient {
+    position: absolute;
+    inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    filter: blur(60px) saturate(0.95) brightness(0.65);
+    transform: scale(1.15);
+    pointer-events: none;
+    z-index: 0;
+  }
+  /* Front video — height-bound, width follows the video's intrinsic
+     aspect ratio, centered horizontally. Works for any video aspect. */
+  .video-area .center-video {
+    position: absolute;
+    top: 0; bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    height: 100%;
+    width: auto;
+    z-index: 1;
+    display: block;
+  }
+  /* Soft vignette so the seam between sharp center and blurred sides is gradual. */
+  .video-area::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none;
+    z-index: 2;
+    box-shadow: inset 0 0 240px rgba(0,0,0,0.55);
+  }
+
+  /* ----- Edge HUD ---------------------------------------------------- */
+  .edge {
+    position: absolute;
+    background: var(--frame);
+    color: var(--text-dim);
+    font-size: 11px;
+    letter-spacing: 0.4em;
+    text-transform: uppercase;
+    user-select: none;
+    --fill: 0;
+  }
+  .edge .label, .edge .value {
+    position: absolute;
+    z-index: 2;
+    text-shadow: 0 1px 2px #000;
+  }
+  .edge .bar {
+    position: absolute;
+    background: currentColor;
+    opacity: 0.85;
+    box-shadow: 0 0 18px currentColor;
+    transition: transform 120ms ease-out, opacity 600ms ease-out;
+  }
+  .edge.pulse .bar { opacity: 1; }
+  .edge.pulse .label, .edge.pulse .value { color: var(--text); transition: color 200ms; }
+
+  /* TOP — Denoise (full screen width). Bar fills left → right. */
+  .edge.top {
+    top: 0; left: 0; right: 0;
+    height: var(--thickness);
+    color: var(--accent);
+    border-bottom: 1px solid var(--frame-line);
+  }
+  .edge.top .label  { top: 50%; left: 24px;  transform: translateY(-50%); }
+  .edge.top .value  { top: 50%; right: 24px; transform: translateY(-50%); color: var(--text); }
+  .edge.top .bar    {
+    bottom: 0; left: 0; height: 2px; width: 100%;
+    transform-origin: left center;
+    transform: scaleX(var(--fill));
+  }
+
+  /* LEFT — Lora 1. Bar fills bottom → top. */
+  .edge.left {
+    top: var(--thickness); bottom: var(--thickness); left: 0;
+    width: var(--thickness);
+    color: var(--accent);
+    border-right: 1px solid var(--frame-line);
+  }
+  .edge.left .label {
+    bottom: 24px; left: 50%; transform: translateX(-50%);
+    writing-mode: vertical-rl; text-orientation: mixed;
+  }
+  .edge.left .value {
+    top: 24px; left: 50%; transform: translateX(-50%);
+    color: var(--text); font-size: 11px;
+  }
+  .edge.left .bar {
+    right: 0; bottom: 0; width: 2px; height: 100%;
+    transform-origin: center bottom;
+    transform: scaleY(var(--fill));
+  }
+
+  /* RIGHT — Lora 2. Bar fills bottom → top. */
+  .edge.right {
+    top: var(--thickness); bottom: var(--thickness); right: 0;
+    width: var(--thickness);
+    color: var(--accent);
+    border-left: 1px solid var(--frame-line);
+  }
+  .edge.right .label {
+    bottom: 24px; left: 50%; transform: translateX(-50%);
+    writing-mode: vertical-rl; text-orientation: mixed;
+  }
+  .edge.right .value {
+    top: 24px; left: 50%; transform: translateX(-50%);
+    color: var(--text); font-size: 11px;
+  }
+  .edge.right .bar {
+    left: 0; bottom: 0; width: 2px; height: 100%;
+    transform-origin: center bottom;
+    transform: scaleY(var(--fill));
+  }
+
+  /* BOTTOM — brand + advanced button (full screen width). */
+  .edge.bottom {
+    bottom: 0; left: 0; right: 0;
+    height: var(--thickness);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    color: var(--text-dim);
+    border-top: 1px solid var(--frame-line);
+  }
+  .edge.bottom .brand { font-size: 11px; letter-spacing: 0.4em; }
+  .edge.bottom .adv-btn {
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--frame-line);
+    border-radius: 4px;
+    padding: 8px 16px;
+    font: inherit;
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+  }
+  .edge.bottom .adv-btn:hover { color: var(--text); border-color: var(--text-dim); }
+
+  /* ----- Advanced sheet (slide-in from right) ----------------------- */
+  .sheet {
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: min(420px, 90vw);
+    background: #0a0a12;
+    border-left: 1px solid var(--frame-line);
+    transform: translateX(100%);
+    transition: transform 280ms cubic-bezier(.2,.7,.2,1);
+    z-index: 10;
+    padding: 28px;
+    overflow-y: auto;
+  }
+  .sheet.open { transform: translateX(0); }
+  .sheet h2 { font-size: 13px; letter-spacing: 0.4em; color: var(--text-dim); margin-bottom: 22px; text-transform: uppercase; }
+  .sheet .row { margin-bottom: 14px; }
+  .sheet label { display: block; font-size: 11px; color: var(--text-dim); letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 6px; }
+  .sheet textarea, .sheet input[type="number"] {
+    width: 100%;
+    background: #06060b;
+    border: 1px solid var(--frame-line);
+    color: var(--text);
+    padding: 10px;
+    font: inherit; font-size: 13px;
+    border-radius: 4px;
+    resize: vertical;
+  }
+  .sheet input[type="range"] { width: 100%; }
+  .sheet .blend-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
+  .sheet .blend-row span { font-size: 11px; color: var(--text-dim); }
+  .sheet .close {
+    position: absolute; top: 10px; right: 10px;
+    background: transparent; color: var(--text-dim); border: none; cursor: pointer; font-size: 20px;
+  }
+  .sheet .slider-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 0;
+  }
+  .sheet .slider-row .name { font-size: 11px; color: var(--text-dim); letter-spacing: 0.18em; text-transform: uppercase; }
+  .sheet .slider-row .val { font-size: 11px; color: var(--text); font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; }
+  .sheet .slider-row input[type="range"] { grid-column: 1 / -1; margin-top: 2px; }
+  .sheet details {
+    border: 1px solid var(--frame-line);
+    border-radius: 4px;
+    margin-bottom: 14px;
+    background: #07070d;
+  }
+  .sheet details summary {
+    padding: 10px 12px;
+    cursor: pointer;
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    user-select: none;
+    list-style: none;
+  }
+  .sheet details summary::-webkit-details-marker { display: none; }
+  .sheet details summary::before { content: "▸ "; display: inline-block; transition: transform 120ms; }
+  .sheet details[open] summary::before { transform: rotate(90deg); }
+  .sheet details[open] summary { color: var(--text); border-bottom: 1px solid var(--frame-line); }
+  .sheet details .body { padding: 10px 12px; }
+  .sheet .send-btn {
+    display: block; width: 100%;
+    background: transparent; color: var(--text-dim);
+    border: 1px solid var(--frame-line); border-radius: 4px;
+    padding: 10px; font: inherit; font-size: 11px;
+    letter-spacing: 0.3em; text-transform: uppercase;
+    cursor: pointer; margin-top: 8px;
+  }
+  .sheet .send-btn:hover { color: var(--text); border-color: var(--text-dim); }
+
+  /* ----- Dev test pad — drives the same code MIDI would. Delete when wired. */
+  .test-pad {
+    position: fixed; bottom: calc(var(--thickness) + 14px); left: 14px;
+    background: rgba(0,0,0,0.6); border: 1px dashed #2a2a38;
+    padding: 10px; border-radius: 6px;
+    font-size: 11px; color: var(--text-dim);
+    z-index: 20;
+  }
+  .test-pad div { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+  .test-pad input[type=range] { width: 120px; }
+  .test-pad .hint { opacity: 0.6; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <!-- Center video area. Two layers: blurred ambient back, sharp front. -->
+  <div class="video-area">
+    <video class="ambient"      src="videos/combined.mp4" autoplay muted loop playsinline></video>
+    <video class="center-video" src="videos/combined.mp4" autoplay muted loop playsinline id="video-a"></video>
+  </div>
+
+  <!-- TOP edge — DENOISE -->
+  <div class="edge top" data-param="denoise">
+    <span class="label">Denoise</span>
+    <span class="value" data-value-of="denoise">0.80</span>
+    <div class="bar"></div>
+  </div>
+
+  <!-- LEFT edge — LORA 1 -->
+  <div class="edge left" data-param="lora1">
+    <span class="label">Daft</span>
+    <span class="value" data-value-of="lora1">0.00</span>
+    <div class="bar"></div>
+  </div>
+
+  <!-- RIGHT edge — LORA 2 -->
+  <div class="edge right" data-param="lora2">
+    <span class="label">Death</span>
+    <span class="value" data-value-of="lora2">0.00</span>
+    <div class="bar"></div>
+  </div>
+
+  <!-- BOTTOM edge — brand + advanced -->
+  <div class="edge bottom">
+    <span class="brand">Daydream</span>
+    <button class="adv-btn" id="open-adv">Advanced</button>
+  </div>
+</div>
+
+<!-- Advanced sheet (operator/curator only) -->
+<aside class="sheet" id="adv-sheet">
+  <button class="close" id="close-adv">&times;</button>
+  <h2>Advanced</h2>
+
+  <details open>
+    <summary>Prompt</summary>
+    <div class="body">
+      <div class="row">
+        <label for="prompt-a">Prompt A</label>
+        <textarea id="prompt-a" rows="2">heavy dubstep, deathstep, afxdump, growl heavy bass distortion</textarea>
+      </div>
+      <div class="row">
+        <label>Blend (A ↔ B)</label>
+        <div class="blend-row">
+          <span>A</span>
+          <input type="range" id="prompt-blend" min="0" max="1" step="0.01" value="0.4">
+          <span>B</span>
+        </div>
+      </div>
+      <div class="row">
+        <label for="prompt-b">Prompt B</label>
+        <textarea id="prompt-b" rows="2">daft punk style, beautiful, four to the floor, angelic</textarea>
+      </div>
+      <button class="send-btn" id="send-prompt">Send Prompt</button>
+    </div>
+  </details>
+
+  <details open>
+    <summary>Generation</summary>
+    <div class="body" id="gen-sliders"></div>
+    <div class="body" style="border-top: 1px solid var(--frame-line); padding-top: 10px;">
+      <label for="seed">Seed</label>
+      <input type="number" id="seed" value="1528">
+    </div>
+  </details>
+
+  <details>
+    <summary>Channel groups</summary>
+    <div class="body" id="ch-groups"></div>
+  </details>
+
+  <details>
+    <summary>Keystone channels</summary>
+    <div class="body" id="ch-keystone"></div>
+  </details>
+</aside>
+
+<!-- Dev test pad — simulate MIDI knob movement so the layout is testable
+     without a controller. Remove this when wiring real state. -->
+<div class="test-pad">
+  <div class="hint">[dev] simulate MIDI</div>
+  <div>denoise <input type="range" min="0" max="1" step="0.01" value="0.8" data-test="denoise"></div>
+  <div>lora1   <input type="range" min="0" max="1" step="0.01" value="0"   data-test="lora1"></div>
+  <div>lora2   <input type="range" min="0" max="1" step="0.01" value="0"   data-test="lora2"></div>
+</div>
+
+<script>
+  // Single source of truth for knob state. Production code will feed this
+  // from the WebSocket/MIDI raw values.
+  const knobs = { denoise: 0.8, lora1: 0.0, lora2: 0.0 };
+
+  function setKnob(name, value) {
+    value = Math.max(0, Math.min(1, value));
+    knobs[name] = value;
+    const edge = document.querySelector(`.edge[data-param="${name}"]`);
+    if (!edge) return;
+    edge.style.setProperty('--fill', value);
+    const valEl = document.querySelector(`[data-value-of="${name}"]`);
+    if (valEl) valEl.textContent = value.toFixed(2);
+    // Pulse so the active edge reads from across a room.
+    edge.classList.remove('pulse');
+    void edge.offsetWidth;
+    edge.classList.add('pulse');
+    clearTimeout(edge._pulseT);
+    edge._pulseT = setTimeout(() => edge.classList.remove('pulse'), 600);
+  }
+
+  Object.keys(knobs).forEach(k => setKnob(k, knobs[k]));
+
+  document.querySelectorAll('[data-test]').forEach(input => {
+    input.addEventListener('input', () => setKnob(input.dataset.test, parseFloat(input.value)));
+  });
+
+  const sheet = document.getElementById('adv-sheet');
+  document.getElementById('open-adv').addEventListener('click', () => sheet.classList.add('open'));
+  document.getElementById('close-adv').addEventListener('click', () => sheet.classList.remove('open'));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') sheet.classList.remove('open'); });
+
+  // ----- Build advanced sliders from the same defs as the backend ----
+  // Mirrors SLIDER_DEFS in app.js (pro params + channel/keystone gains).
+  // Hint strength is included here so curator can tune it from one panel.
+  const ADV_SLIDERS = {
+    gen: [
+      { key: 'hint_strength', label: 'Hint strength', min: 0, max: 2,   step: 0.01, default: 1.4 },
+      { key: 'feedback',      label: 'Feedback',      min: 0, max: 1,   step: 0.01, default: 0.0 },
+      { key: 'shift',         label: 'Shift',         min: 0, max: 1,   step: 0.01, default: 0.5 },
+      { key: 'noise_share',   label: 'Noise share',   min: 0, max: 1,   step: 0.01, default: 0.0 },
+      { key: 'ode_noise',     label: 'ODE noise',     min: 0, max: 0.5, step: 0.01, default: 0.0 },
+    ],
+    chGroup: [
+      { key: 'ch_g0', label: 'Group 0' },
+      { key: 'ch_g1', label: 'Group 1' },
+      { key: 'ch_g2', label: 'Group 2' },
+      { key: 'ch_g3', label: 'Group 3' },
+      { key: 'ch_g4', label: 'Group 4' },
+      { key: 'ch_g5', label: 'Group 5' },
+      { key: 'ch_g6', label: 'Group 6' },
+      { key: 'ch_g7', label: 'Group 7' },
+    ],
+    chKeystone: [
+      { key: 'ch13', label: 'Ch 13' },
+      { key: 'ch14', label: 'Ch 14' },
+      { key: 'ch19', label: 'Ch 19' },
+      { key: 'ch23', label: 'Ch 23' },
+      { key: 'ch29', label: 'Ch 29' },
+      { key: 'ch56', label: 'Ch 56' },
+    ],
+  };
+  // Channel slider defaults: max 3, default 1, step 0.15 (matching SLIDER_DEFS).
+  const CH_DEFAULT = { min: 0, max: 3, step: 0.01, default: 1.0 };
+
+  function buildSliderRow(def) {
+    const row = document.createElement('div');
+    row.className = 'slider-row';
+    row.innerHTML = `
+      <span class="name">${def.label}</span>
+      <span class="val" data-adv-val="${def.key}">${def.default.toFixed(2)}</span>
+      <input type="range" min="${def.min}" max="${def.max}" step="${def.step}" value="${def.default}" data-adv-key="${def.key}">
+    `;
+    const input = row.querySelector('input');
+    const val = row.querySelector('[data-adv-val]');
+    input.addEventListener('input', () => {
+      val.textContent = parseFloat(input.value).toFixed(2);
+      // In production: send {key: parseFloat(input.value)} into the
+      // raw-params dict that gets shipped over WebSocket each tick.
+    });
+    return row;
+  }
+
+  ADV_SLIDERS.gen.forEach(d => document.getElementById('gen-sliders').appendChild(buildSliderRow(d)));
+  ADV_SLIDERS.chGroup.forEach(d => document.getElementById('ch-groups').appendChild(buildSliderRow({ ...CH_DEFAULT, ...d })));
+  ADV_SLIDERS.chKeystone.forEach(d => document.getElementById('ch-keystone').appendChild(buildSliderRow({ ...CH_DEFAULT, ...d })));
+</script>
+
+</body>
+</html>
