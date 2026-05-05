@@ -135,6 +135,21 @@ def max_profile_duration_s() -> float:
     return max(_TRT_ENGINE_PROFILES.keys())
 
 
+def smallest_fitting_profile_duration_s(duration_s: float) -> float:
+    """Smallest registered profile duration that can hold ``duration_s``.
+
+    Pure: ignores filesystem state. Returns the registered profile,
+    not whichever was *built* — so callers can compare against the
+    actually-loaded profile to decide whether a fallback happened.
+    Falls back to ``max_profile_duration_s()`` when no registered
+    profile is large enough (matches ``select_trt_engines``).
+    """
+    for max_dur in sorted(_TRT_ENGINE_PROFILES.keys()):
+        if max_dur >= duration_s:
+            return max_dur
+    return max(_TRT_ENGINE_PROFILES.keys())
+
+
 def select_trt_engines(duration_s: float = 60.0) -> dict[str, str]:
     """Pick the smallest engine profile that can handle ``duration_s``.
 
@@ -287,6 +302,66 @@ def available_dreamvae_decode_engine(duration_s: float) -> Path | None:
         if path.exists():
             return path
     return None
+
+
+# ------------------------------------------------------------------
+# Windowed VAE decode (single shared profile across both decoder
+# variants). The profile is small enough that it costs ~1.5 GB of
+# workspace at TRT context-creation time vs ~9 GB for the canonical
+# 240 s engine — see tests/benchmarks/bench_vae_decode_profiles.py.
+#
+# Profile shape (in latent frames at 25 fps):
+#     min = 75   (3 s)
+#     opt = 125  (5 s)
+#     max = 750  (30 s)
+#
+# The ``StreamVAEDecode`` window+overlap chunks fit comfortably inside
+# this range for any user-facing window in [5, 30] seconds, which is
+# the range Session enforces when ``vae_window > 0``.
+# ------------------------------------------------------------------
+
+WINDOWED_VAE_DECODE_NAME = "vae_decode_fp16_3to30s"
+WINDOWED_DREAMVAE_DECODE_NAME = "dreamvae_decode_fp16_3to30s"
+WINDOWED_VAE_PROFILE_FRAMES: tuple[int, int, int] = (75, 125, 750)
+WINDOWED_VAE_WINDOW_RANGE_S: tuple[float, float] = (5.0, 30.0)
+
+
+def windowed_vae_decode_engine_name(*, dreamvae: bool = False) -> str:
+    """Engine directory/file stem for the windowed VAE decode engine.
+
+    Args:
+        dreamvae: Pick the distilled student engine instead of the
+            standard teacher engine. The two share the same profile
+            shape so they're interchangeable from the runtime's POV.
+    """
+    return WINDOWED_DREAMVAE_DECODE_NAME if dreamvae else WINDOWED_VAE_DECODE_NAME
+
+
+def windowed_vae_decode_engine_path(*, dreamvae: bool = False) -> Path:
+    """Path to the windowed VAE decode engine. Pure: does not check
+    existence. Use :func:`available_windowed_vae_decode_engine` for
+    existence-aware lookup."""
+    return trt_engine_path(windowed_vae_decode_engine_name(dreamvae=dreamvae))
+
+
+def available_windowed_vae_decode_engine(*, dreamvae: bool = False) -> Path | None:
+    """Return the windowed VAE decode engine path if it is built, else None.
+
+    Callers (Session, demo backends) use this to opportunistically swap
+    in the small-profile engine when ``vae_window > 0``, falling back
+    silently to whatever the caller originally configured.
+    """
+    p = windowed_vae_decode_engine_path(dreamvae=dreamvae)
+    return p if p.exists() else None
+
+
+def looks_like_dreamvae_engine(path: str | Path) -> bool:
+    """True when ``path`` points at a dreamvae (distilled) engine.
+
+    The runtime distinguishes the two variants only by name; both share
+    the same I/O contract (latents [B,64,T] -> audio [B,2,1920*T]).
+    """
+    return Path(path).name.startswith("dreamvae_decode_")
 
 
 def project_root() -> Path:
