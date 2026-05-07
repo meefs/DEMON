@@ -45,9 +45,18 @@ export function readKnob(cc: number, value: number): KnobReading {
   const last = lastValue.get(cc);
   lastValue.set(cc, value);
 
-  // Snap to extremes regardless of prior history. Without this, a fast
-  // sweep from mid-range to 0 might leave the slider at 0.07 because
-  // delta clamping limited each step.
+  // First message for this CC — record only, no slider movement. Without
+  // this gate, a knob parked at an extreme when the user maps it would
+  // hit the extreme-snap branch below and slam the slider to 0 or max
+  // on first contact — exactly the takeover bug this module exists to
+  // prevent. We can't tell "parked at extreme on first contact" from
+  // "swept into extreme during tracking" without a prior value, so we
+  // do nothing the first time and let delta tracking start on message 2.
+  if (last === undefined) return { absolute: null, delta: null };
+
+  // Snap to extremes once we ARE tracking. Without this, a fast sweep
+  // from mid-range to 0 might leave the slider at 0.07 because delta
+  // clamping limited each step.
   if (value <= EXTREME_LOW_THRESHOLD) {
     return { absolute: 0, delta: null };
   }
@@ -55,7 +64,6 @@ export function readKnob(cc: number, value: number): KnobReading {
     return { absolute: 127, delta: null };
   }
 
-  if (last === undefined) return { absolute: null, delta: null };
   const raw = value - last;
   // Clamp instead of drop. A fast sweep still produces motion in the
   // right direction; the next message refines.
