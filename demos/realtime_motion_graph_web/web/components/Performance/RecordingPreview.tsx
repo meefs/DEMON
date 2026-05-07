@@ -91,6 +91,7 @@ export function RecordingPreview() {
     });
     triggerDownload(prepared.blob, prepared.filename);
     notifySaved(prepared, state.durationMs);
+    dismiss();
   }
 
   async function share() {
