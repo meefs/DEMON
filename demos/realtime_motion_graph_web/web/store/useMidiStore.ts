@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 
+import { resetKnobDelta } from "@/engine/midi/absoluteDelta";
 import {
   DEFAULT_MIDI_MAP,
   MIDI_STORAGE_KEY,
@@ -114,6 +115,12 @@ export const useMidiStore = create<MidiState>((set, get) => ({
         if (next.cc[k] === learn.target) delete next.cc[k];
       }
       next.cc[String(num)] = learn.target;
+      // Drop any cached prior value for this CC so the next message
+      // re-establishes a baseline. Without this, rebinding CC X from
+      // param A to param B would treat the first post-rebind message
+      // as a delta from A's last raw value, producing a wrong jump on
+      // B's slider.
+      resetKnobDelta(num);
     } else if (kind === "note") {
       // Action button learning a NOTE.
       for (const k of Object.keys(next.notes)) {

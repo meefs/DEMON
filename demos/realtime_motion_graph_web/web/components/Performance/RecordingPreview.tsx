@@ -91,6 +91,7 @@ export function RecordingPreview() {
     });
     triggerDownload(prepared.blob, prepared.filename);
     notifySaved(prepared, state.durationMs);
+    dismiss();
   }
 
   async function share() {
@@ -111,15 +112,18 @@ export function RecordingPreview() {
       if (nav.canShare?.(data)) {
         await nav.share(data);
         notifySaved(prepared, state.durationMs);
+        dismiss();
         return;
       }
     } catch (err) {
-      // User cancellation throws AbortError — just swallow.
+      // User cancellation throws AbortError — leave the preview open so
+      // they can try a different action (Save / different share target).
       if ((err as Error).name === "AbortError") return;
       console.warn("[RecordingPreview] share failed", err);
     }
     triggerDownload(prepared.blob, prepared.filename);
     notifySaved(prepared, state.durationMs);
+    dismiss();
   }
 
   const canShare =
