@@ -3,6 +3,7 @@
 import type { CSSProperties } from "react";
 import { useEffect, useRef } from "react";
 
+import { useTactileSlider } from "@/hooks/useTactileSlider";
 import { usePerformanceStore } from "@/store/usePerformanceStore";
 import { SLIDER_META } from "@/types/engine";
 
@@ -60,6 +61,9 @@ export function SliderGroup({ param, label, max, kbd }: Props) {
   const setSlider = usePerformanceStore((s) => s.setSlider);
   const trackRef = useRef<HTMLDivElement | null>(null);
 
+  // Haptics on landmark crossings (0, 0.5, 1.0) + long-press reset to default.
+  useTactileSlider({ param, max: effectiveMax, ref: trackRef });
+
   const fraction = effectiveMax > 0 ? value / effectiveMax : 0;
   const pct = Math.max(0, Math.min(1, fraction)) * 100;
 
@@ -76,6 +80,13 @@ export function SliderGroup({ param, label, max, kbd }: Props) {
     let cachedRect: DOMRect | null = null;
     let pendingClientY = 0;
     let rafId = 0;
+    // Touch-only: defer the initial commit by ENGAGE_MS so a brief brush
+    // against the slider doesn't yank the value. Movement before the
+    // timeout promotes us to engaged immediately. Mouse/pen pointers
+    // engage instantly (desktop expectation).
+    let engaged = false;
+    let engageTimer: ReturnType<typeof setTimeout> | null = null;
+    const ENGAGE_MS = 50;
 
     const commit = () => {
       if (!cachedRect) return;
@@ -83,34 +94,53 @@ export function SliderGroup({ param, label, max, kbd }: Props) {
       setSlider(param, Math.max(0, Math.min(1, t)) * effectiveMax);
     };
 
-    // RAF-coalesce store writes during drag: pointermove fires 60–120
-    // times/sec, but the render loop can only show ~60 frames/sec.
-    // Coalescing also collapses the cascade of React re-renders triggered
-    // by setSlider() into one per frame.
     const flush = () => {
       rafId = 0;
-      if (!dragging) return;
+      if (!dragging || !engaged) return;
       commit();
     };
 
+    const clearEngageTimer = () => {
+      if (engageTimer) {
+        clearTimeout(engageTimer);
+        engageTimer = null;
+      }
+    };
+
     const onPointerDown = (e: PointerEvent) => {
-      // Right-click reserved for MIDI-learn (Phase 9).
+      // Right-click reserved for MIDI-learn.
       if (e.button !== 0) return;
       dragging = true;
+      engaged = false;
       cachedRect = el.getBoundingClientRect();
       el.setPointerCapture(e.pointerId);
       pendingClientY = e.clientY;
-      // Commit immediately so a click-without-drag still moves the value.
-      commit();
+      if (e.pointerType !== "touch") {
+        engaged = true;
+        commit();
+        return;
+      }
+      engageTimer = setTimeout(() => {
+        engageTimer = null;
+        engaged = true;
+        commit();
+      }, ENGAGE_MS);
     };
     const onPointerMove = (e: PointerEvent) => {
       if (!dragging) return;
       pendingClientY = e.clientY;
+      if (!engaged) {
+        clearEngageTimer();
+        engaged = true;
+        commit();
+        return;
+      }
       if (rafId === 0) rafId = requestAnimationFrame(flush);
     };
     const onPointerUp = (e: PointerEvent) => {
       if (!dragging) return;
       dragging = false;
+      clearEngageTimer();
       if (rafId !== 0) {
         cancelAnimationFrame(rafId);
         rafId = 0;

@@ -39,6 +39,9 @@ export function useParamSync() {
         seed: perf.seed,
         ...perf.sliderValues,
       };
+      // lora_blend is a UI-only knob (useEdgeLoraBinding fans it out into
+      // the paired lora_str_<id> values). The engine doesn't know it.
+      delete raw.lora_blend;
       // Per-LoRA strength sliders ride along under lora_str_<id> keys.
       // We prefer perf.sliderValues (smoothed via the tween) and only
       // fall back to lora.strengths when the perf store hasn't seen

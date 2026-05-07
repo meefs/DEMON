@@ -104,7 +104,10 @@ export class GraphRenderer {
   }
 
   private _resize(): void {
-    const dpr = window.devicePixelRatio || 1;
+    // Cap DPR at 2 — matches HUD + EffectsRenderer. On phones with DPR=3+
+    // the extra pixels are imperceptible on this kind of plot but cost
+    // ~2.25x in fragment work per frame.
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
     const r = this.canvas.getBoundingClientRect();
     this.canvas.width = Math.max(1, Math.floor(r.width * dpr));
     this.canvas.height = Math.max(1, Math.floor(r.height * dpr));

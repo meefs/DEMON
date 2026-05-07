@@ -27,7 +27,12 @@ import { ConfigModal } from "./ConfigModal";
 import { DesktopEdgeDrag } from "./DesktopEdgeDrag";
 import { HUDFrame } from "./HUDFrame";
 import { InstallStage } from "./InstallStage";
-import { MobileRemixRail } from "./MobileRemixRail";
+import { LiveIndicator } from "./LiveIndicator";
+import {
+  MobileLoraBlendStepper,
+  MobileRemixStepper,
+} from "./MobileStepperRail";
+import { PortraitLockOverlay } from "./PortraitLockOverlay";
 import { RecordButton } from "./RecordButton";
 import { RecordingPreview } from "./RecordingPreview";
 import { StartOverlay } from "./StartOverlay";
@@ -104,7 +109,12 @@ export function PerformanceShell() {
         }}
       />
       <HUDFrame />
-      {isMobile && <MobileRemixRail />}
+      {isMobile && (
+        <>
+          <MobileRemixStepper />
+          <MobileLoraBlendStepper />
+        </>
+      )}
       {!isMobile && (
         <>
           <DesktopEdgeDrag side="top" />
@@ -118,9 +128,15 @@ export function PerformanceShell() {
 
       <StatusBar />
 
+      <LiveIndicator />
+
       <RecordingPreview />
 
       <CustomCursor />
+
+      {/* Phone-only portrait gate. CSS-driven; renders behind the rest of
+          the UI and only paints in (max-width: 768px) AND portrait. */}
+      <PortraitLockOverlay />
     </div>
   );
 }

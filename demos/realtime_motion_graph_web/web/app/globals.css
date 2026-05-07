@@ -1310,9 +1310,10 @@ body[data-mode="graph"] #install-video-area .focal-side-blur { display: none; }
 }
 
 .pause-btn {
-  min-width: 36px;
-  min-height: 32px;
-  padding: 0 8px;
+  /* WCAG 2.5.5 / iOS HIG touch target floor. */
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 10px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1350,8 +1351,10 @@ body[data-mode="graph"] #install-video-area .focal-side-blur { display: none; }
 }
 
 .send-prompt-btn {
-  padding: 8px 16px;
-  min-height: 36px;
+  padding: 10px 16px;
+  /* WCAG 2.5.5 / iOS HIG touch target floor. */
+  min-height: 44px;
+  min-width: 44px;
   font-size: 0.72em;
   letter-spacing: 0.06em;
 }
@@ -3778,3 +3781,536 @@ body[data-mode="graph"] #install-video-area .focal-side-blur { display: none; }
   }
 }
 
+
+/* ============================================================================
+   Mobile UX overhaul (added 2026-05-07)
+   ----------------------------------------------------------------------------
+   - Right-edge LoRA blend rail (mobile): mirror of .remix-rail.
+   - Lite track carousel: horizontal-scroll fixture chips + upload chip.
+   - Lite actions row replaces the prompt row.
+   - Hide AudioSourceCrate placard while the mobile Lite drawer is open
+     (avoids double track-picker UI; LiteTrackCarousel takes over).
+   - Persistent "live" dot indicator in the top-right safe area.
+   - Universal press-state polish for coarse pointers.
+   See docs/mobile-design-spec.md for the rationale.
+   ============================================================================ */
+
+/* ── LoRA blend rail (right edge, mobile) ───────────────────────────────── */
+:root { --lora-blend-rail-w: 56px; }
+
+.lora-blend-rail {
+  position: fixed;
+  right: 0;
+  top: max(96px, calc(env(safe-area-inset-top, 0px) + 80px));
+  bottom: calc(
+    var(--drawer-handle-h, 52px) +
+    env(safe-area-inset-bottom, 0px) + 12px
+  );
+  width: var(--lora-blend-rail-w);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.lora-blend-rail-label-top,
+.lora-blend-rail-label-bottom {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 0.6em;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text);
+  writing-mode: vertical-rl;
+  text-shadow: 0 0 12px var(--accent-glow);
+  max-height: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lora-blend-rail-label-top {
+  margin-top: 4px;
+  /* Reads top-down (label belongs to the top end of the rail). */
+  transform: rotate(180deg);
+}
+.lora-blend-rail-label-bottom {
+  margin-bottom: 4px;
+  opacity: 0.7;
+}
+
+.lora-blend-rail-drag {
+  flex: 1 1 auto;
+  width: 100%;
+  cursor: ns-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+/* ── Lite track carousel ──────────────────────────────────────────────── */
+.lite-track-carousel {
+  flex: 0 0 auto;
+  position: relative;
+  margin: 0 -16px;
+  padding: 0 4px;
+  /* Fade the edges so chips bleed off without a hard cut. */
+  -webkit-mask-image: linear-gradient(90deg,
+    transparent, black 20px, black calc(100% - 20px), transparent);
+          mask-image: linear-gradient(90deg,
+    transparent, black 20px, black calc(100% - 20px), transparent);
+}
+.lite-track-carousel-scroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  padding: 6px 12px 8px;
+  -webkit-overflow-scrolling: touch;
+}
+.lite-track-carousel-scroll::-webkit-scrollbar { display: none; }
+.lite-track-carousel-empty {
+  font-family: var(--font-mono);
+  font-size: 0.74em;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-dim);
+  padding: 12px 8px;
+}
+
+.lite-track-chip {
+  scroll-snap-align: center;
+  flex: 0 0 auto;
+  /* WCAG 2.5.5 floor (44x44) — chip is taller than tall, hugs label width. */
+  min-height: 48px;
+  min-width: 64px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 1px solid var(--frame-line);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.74em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 120ms, border-color 120ms, background 120ms,
+              transform 120ms, box-shadow 120ms;
+}
+.lite-track-chip:hover {
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+.lite-track-chip:active {
+  transform: scale(0.96);
+}
+.lite-track-chip--current {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.lite-track-chip--custom {
+  /* Subtle hint that this is user-uploaded. */
+  border-style: dashed;
+}
+.lite-track-chip--upload {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  border-style: dashed;
+}
+.lite-track-chip--upload:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.lite-track-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.lite-track-chip-label {
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Lite actions row (replaces .lite-row--prompt after reshuffle) ──── */
+.lite-row--actions {
+  flex: 0 0 auto;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ── Hide AudioSourceCrate when the mobile Lite drawer is open ──────── */
+@media (max-width: 768px) {
+  body.drawer-open .audio-source-crate,
+  body.drawer-open .audio-source-fan {
+    display: none !important;
+  }
+}
+
+/* ── Persistent "live" dot ──────────────────────────────────────────── */
+.live-indicator {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  right: max(14px, env(safe-area-inset-right, 0px));
+  /* Sit above the canvas, below modals. */
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  font-size: 0.62em;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.live-indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff3a3a;
+  box-shadow: 0 0 8px rgba(255, 58, 58, 0.7);
+  animation: live-pulse 1.4s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.86); }
+}
+
+/* ── Universal press state on coarse pointers ───────────────────────── */
+@media (pointer: coarse) {
+  button:not(:disabled):active {
+    transform: scale(0.97);
+  }
+}
+
+/* ============================================================================
+   Mobile UX revision (2026-05-07, follow-up)
+   ----------------------------------------------------------------------------
+   - Stepper rails replace the drag rails on mobile (up/down arrow buttons).
+   - Portrait lock overlay on phones in portrait orientation.
+   - RecordButton moves to top-left on mobile (away from drawer/halo).
+   - Halo menu gets max-height + scroll so it never clips on small phones.
+   See docs/mobile-design-spec.md.
+   ============================================================================ */
+
+/* ── Stepper rails (left + right edges, mobile) ─────────────────────────── */
+/* The writhing ribbon canvas under .install-edge-{side} provides the
+   visible affordance — the rail itself is two transparent tap zones with
+   small chevrons at each end (≈the head of the ribbon). The label sits
+   centered between the zones. No numeric readout, no separate hint. */
+:root { --stepper-rail-w: var(--remix-rail-w, 64px); }
+
+.stepper-rail {
+  position: fixed;
+  top: max(96px, calc(env(safe-area-inset-top, 0px) + 60px));
+  /* Generous clearance above the Advanced Controls drawer handle so the
+     bottom-decrease tap zone can't be confused for the drawer toggle.
+     drawer-handle-h (52px) + safe-area-bottom + 36px buffer keeps the
+     bottom chevron well clear of the handle's hit area. */
+  bottom: calc(
+    var(--drawer-handle-h, 52px) +
+    env(safe-area-inset-bottom, 0px) + 36px
+  );
+  width: var(--stepper-rail-w);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.stepper-rail--left {
+  left: max(0px, env(safe-area-inset-left, 0px));
+}
+.stepper-rail--right {
+  right: max(0px, env(safe-area-inset-right, 0px));
+}
+
+/* Each zone is half the rail's vertical real estate — generous touch
+   target. Backgrounds are transparent so the ribbon canvas underneath
+   stays visible. The chevron is the only visible affordance. */
+.stepper-rail-zone {
+  flex: 1 1 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: var(--text);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 120ms;
+}
+.stepper-rail-zone--up { align-items: flex-start; padding-top: 8px; }
+/* Inset the bottom chevron + tap zone away from the drawer handle so the
+   user's thumb can't land on the wrong control. */
+.stepper-rail-zone--down { align-items: flex-end; padding-bottom: 14px; }
+.stepper-rail-zone:hover { color: var(--accent); }
+.stepper-rail-zone:active .stepper-rail-chevron {
+  transform: scale(1.15);
+  color: var(--accent);
+  filter: drop-shadow(0 0 8px var(--accent-glow));
+}
+
+.stepper-rail-chevron {
+  display: block;
+  opacity: 0.85;
+  transition: transform 120ms, color 120ms, filter 120ms;
+  filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.6));
+}
+
+.stepper-rail-readout {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  /* Pin in the middle between the two zones. */
+  padding: 12px 0;
+  pointer-events: none;
+}
+.stepper-rail-label {
+  font-family: var(--font-mono);
+  font-size: 0.6em;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text);
+  writing-mode: vertical-rl;
+  text-shadow: 0 0 12px var(--accent-glow);
+  /* Read top-down so the word's reading order matches the way the rail
+     extends (top label at top of rail when interpreted vertically). */
+  transform: rotate(180deg);
+  white-space: nowrap;
+}
+.stepper-rail-sublabel {
+  font-family: var(--font-mono);
+  font-size: 0.5em;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  white-space: nowrap;
+}
+
+/* Hide the perimeter writhe ribbons + edge labels on mobile. The new
+   stepper rails own the label slot, and the ribbons are visual noise on
+   a phone-sized canvas — they reduce contrast with the chevrons and
+   make the stage feel cluttered. JS bindings (data-bar, --fill writes
+   in useEdgeLoraBinding / steppers) still work because display:none
+   leaves the DOM nodes in place. */
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .install-edge {
+    display: none;
+  }
+}
+
+/* ── Portrait lock overlay (phones in portrait only) ───────────────────── */
+.portrait-lock {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 200; /* above everything else, including modals */
+  background: rgba(6, 6, 12, 0.96);
+  -webkit-backdrop-filter: blur(8px);
+          backdrop-filter: blur(8px);
+  align-items: center;
+  justify-content: center;
+  padding: max(24px, env(safe-area-inset-top, 0px))
+           max(24px, env(safe-area-inset-right, 0px))
+           max(24px, env(safe-area-inset-bottom, 0px))
+           max(24px, env(safe-area-inset-left, 0px));
+  text-align: center;
+  color: var(--text);
+}
+@media (max-width: 768px) and (orientation: portrait) {
+  .portrait-lock {
+    display: flex;
+  }
+}
+.portrait-lock-card {
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+.portrait-lock-icon {
+  color: var(--accent);
+  filter: drop-shadow(0 0 12px var(--accent-glow));
+  animation: portrait-rotate 2.4s ease-in-out infinite;
+}
+@keyframes portrait-rotate {
+  0%, 30% { transform: rotate(0deg); }
+  60% { transform: rotate(90deg); }
+  100% { transform: rotate(90deg); opacity: 0.85; }
+}
+.portrait-lock-title {
+  font-family: var(--font-mono);
+  font-size: 1.1em;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.portrait-lock-body {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+/* ── RecordButton repositioned to top-left on phones ───────────────────── */
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .turntable {
+    /* Flip from bottom-right to top-left. Top inset matches halo-badge so
+       the two corner anchors visually balance. */
+    top: max(14px, env(safe-area-inset-top, 0px));
+    left: max(14px, env(safe-area-inset-left, 0px));
+    /* Cancel the desktop right/bottom anchors. */
+    right: auto;
+    bottom: auto;
+    /* Slightly shrunk so it doesn't crowd the left rail. */
+    width: 78px;
+    height: 60px;
+  }
+  .turntable-disc { width: 48px; height: 48px; }
+  /* Warning bubble sits below the button instead of above. */
+  .rec-warning {
+    top: calc(100% + 6px);
+    bottom: auto;
+  }
+}
+
+/* ── Halo menu: cap height + scroll on mobile so items never clip ─────── */
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .halo-menu {
+    /* Top of menu sits at ~78px from the top; allow it to fill the
+       rest of the viewport minus drawer-handle clearance + safe-area
+       bottom inset. dvh keeps this stable across address-bar collapse. */
+    max-height: calc(
+      100dvh - 88px
+      - var(--drawer-handle-h, 52px)
+      - env(safe-area-inset-bottom, 0px)
+    );
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* ============================================================================
+   Landscape-phone tuning for Lite drawer + All Controls sheet
+   ----------------------------------------------------------------------------
+   On a landscape phone (~393px tall), the desktop drawer min-height of
+   380px covers the entire viewport. Reduce so users can still see the
+   stage when the drawer is open. Compress slider tracks to fit the
+   shorter drawer. Center the All-Controls tiles instead of left-aligning
+   them in the wide horizontal space.
+   ============================================================================ */
+@media (max-height: 500px) and (orientation: landscape) {
+  :root {
+    /* clamp: min 220 / pref 70vh / max 280. Leaves ~115px of stage
+       visible on a 393px tall phone (Tap-to-Begin overlay still fits). */
+    --drawer-h: clamp(220px, 70vh, 280px);
+  }
+  /* The default .install-sheet--mobile rule hardcodes height: 360px,
+     which fully covers a 393px-tall landscape phone. Override here. */
+  .install-sheet--mobile {
+    height: var(--drawer-h);
+  }
+
+  /* Landscape phones have plenty of horizontal real estate but ~220px of
+     drawer height to work with. A vertical stack (sliders + carousel +
+     actions) would force slider-groups to spill into the handle area
+     because the row can't shrink below the slider-group's natural
+     height. Switch to a 2-column grid: 3 sliders on the left fill the
+     drawer's full height; the track carousel + actions row stack on the
+     right. */
+  .lite-controls {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) minmax(220px, 1fr);
+    grid-template-rows: 1fr auto;
+    grid-template-areas:
+      "main carousel"
+      "main actions";
+    column-gap: 18px;
+    row-gap: 8px;
+    padding: 8px 14px 10px;
+    padding-left: calc(14px + var(--stepper-rail-w, 64px));
+    padding-right: calc(14px + var(--stepper-rail-w, 64px));
+  }
+  .lite-row--main {
+    grid-area: main;
+    /* min-height:0 lets the row honor the grid track height instead of
+       blowing it out from natural slider-group height. */
+    min-height: 0;
+    gap: 16px;
+    padding: 0;
+  }
+  .lite-track-carousel {
+    grid-area: carousel;
+    /* Cancel the wide negative margin from the default rule — we're
+       inside a grid cell now. */
+    margin: 0;
+    align-self: end;
+  }
+  .lite-track-carousel-scroll {
+    padding: 4px 4px 4px;
+  }
+  .lite-row--actions {
+    grid-area: actions;
+    align-self: end;
+    margin: 0;
+  }
+
+  /* Tighten the slider sub-pieces so a 3-slider row fits in ~200px of
+     drawer height without the labels or values being cropped. */
+  .lite-row--main .slider-track {
+    min-height: 90px;
+  }
+  .lite-row--main .slider-thumb {
+    width: 24px;
+    height: 24px;
+  }
+  .lite-row--main .slider-group {
+    flex: 0 0 64px;
+  }
+  .lite-row--main .slider-label {
+    min-height: 1.2em;
+    font-size: 0.58em;
+  }
+  .lite-row--main .slider-value {
+    margin-top: 14px;
+    font-size: 0.6em;
+  }
+}
+
+/* Center mixer tiles + their slider rows inside the All Controls sheet so
+   small tiles (MAIN with 2 sliders, ENGINE with 4) don't sit lonely on the
+   left of an 800px-wide section. CHANNEL_GAINS / CHANNELS still scroll
+   horizontally when their 8 / 6 sliders exceed the container — center
+   alignment doesn't break scroll. */
+.mobile-sheet-section .mixer-channels {
+  justify-content: center;
+}
+/* Padding bottom on the section so the last bit of content (e.g. Sign Out
+   in the halo menu, the prompt Send button) clears the tab bar instead
+   of sitting flush against it. */
+.mobile-sheet-section {
+  padding-bottom: 24px;
+}

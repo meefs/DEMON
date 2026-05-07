@@ -148,6 +148,7 @@ export function isManualOverrideActive(param: string): boolean {
 const DEFAULT_SLIDER_VALUES: Record<string, number> = {
   denoise: 0.7,
   hint_strength: 1.4,
+  lora_blend: 0.5,
   feedback: 0.0,
   shift: 0.5,
   noise_share: 0.0,
@@ -253,6 +254,9 @@ interface PerformanceState {
   hydratePersistedPrefs: () => void;
   /** Reset every slider + seed + blend to defaults (idle-reset). */
   resetToDefaults: () => void;
+  /** Reset a single slider to its default. Used for the long-press
+   *  "snap back" gesture on mobile sliders / rails. */
+  resetSlider: (param: string) => void;
 }
 
 function clampToMeta(param: string, value: number): number {
@@ -408,6 +412,16 @@ export const usePerformanceStore = create<PerformanceState>((set) => ({
       sliderTargets: { ...DEFAULT_SLIDER_VALUES },
       seed: 0,
       blend: 0.4,
+    }));
+  },
+  resetSlider: (param) => {
+    const def = DEFAULT_SLIDER_VALUES[param];
+    if (typeof def !== "number") return;
+    cancelTween(param);
+    stampManualTouch(param);
+    set((s) => ({
+      sliderValues: { ...s.sliderValues, [param]: def },
+      sliderTargets: { ...s.sliderTargets, [param]: def },
     }));
   },
 }));
