@@ -65,6 +65,23 @@ export function RecordingPreview() {
     document.dispatchEvent(new CustomEvent("dd:dismiss-record-preview"));
   }
 
+  function notifySaved(prepared: Prepared, durationMs: number) {
+    // Lets the host webapp persist the clip alongside its own session
+    // metadata (see demon-public-demo's saved-sessions feature). Fired
+    // after the user-visible Save/Share completes so the listener
+    // doesn't race with the download. No-op if nobody is listening.
+    document.dispatchEvent(
+      new CustomEvent("dd:recording-saved", {
+        detail: {
+          blob: prepared.blob,
+          mime: prepared.mime,
+          filename: prepared.filename,
+          durationMs,
+        },
+      }),
+    );
+  }
+
   async function save() {
     if (state.kind !== "preview") return;
     const prepared = await prepareDownload({
@@ -73,6 +90,7 @@ export function RecordingPreview() {
       mime: state.mime,
     });
     triggerDownload(prepared.blob, prepared.filename);
+    notifySaved(prepared, state.durationMs);
   }
 
   async function share() {
@@ -92,6 +110,7 @@ export function RecordingPreview() {
       const data: ShareData = { files: [file], title: "Daydream clip" };
       if (nav.canShare?.(data)) {
         await nav.share(data);
+        notifySaved(prepared, state.durationMs);
         return;
       }
     } catch (err) {
@@ -100,6 +119,7 @@ export function RecordingPreview() {
       console.warn("[RecordingPreview] share failed", err);
     }
     triggerDownload(prepared.blob, prepared.filename);
+    notifySaved(prepared, state.durationMs);
   }
 
   const canShare =

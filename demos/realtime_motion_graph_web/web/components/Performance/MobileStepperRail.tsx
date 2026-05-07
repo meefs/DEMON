@@ -37,8 +37,13 @@ interface Props {
   max: number;
   /** Header label (e.g. "Remix Strength"). */
   label: string;
-  /** Optional sublabel rendered under the value (e.g. paired LoRA names). */
-  sublabel?: string;
+  /** Optional per-chevron labels — rendered just inside the screen edge,
+   *  paired with the up/down chevrons so the user can see at a glance
+   *  which direction does what. For LoRA blend: top = the LoRA that
+   *  pressing up gives MORE of, bottom = the LoRA pressing down
+   *  emphasizes. Empty values render nothing. */
+  sublabelTop?: string;
+  sublabelBottom?: string;
   /** Inverted means top button decreases, bottom increases. Use for the
    *  blend rail where "top of rail = LoRA A" and pressing up should mean
    *  more A (which is value=0). */
@@ -64,7 +69,8 @@ export function MobileStepperRail({
   param,
   max,
   label,
-  sublabel,
+  sublabelTop,
+  sublabelBottom,
   invert = false,
   invertFill = false,
 }: Props) {
@@ -175,9 +181,14 @@ export function MobileStepperRail({
       <button
         type="button"
         className="stepper-rail-zone stepper-rail-zone--up"
-        aria-label={`Increase ${label}`}
+        aria-label={
+          sublabelTop ? `${label} more ${sublabelTop}` : `Increase ${label}`
+        }
         {...makeHandlers(topDelta)}
       >
+        {sublabelTop && (
+          <span className="stepper-rail-zone-label">{sublabelTop}</span>
+        )}
         <svg
           className="stepper-rail-chevron stepper-rail-chevron--up"
           viewBox="0 0 24 24"
@@ -198,15 +209,21 @@ export function MobileStepperRail({
 
       <div className="stepper-rail-readout">
         <div className="stepper-rail-label">{label}</div>
-        {sublabel && <div className="stepper-rail-sublabel">{sublabel}</div>}
       </div>
 
       <button
         type="button"
         className="stepper-rail-zone stepper-rail-zone--down"
-        aria-label={`Decrease ${label}`}
+        aria-label={
+          sublabelBottom
+            ? `${label} more ${sublabelBottom}`
+            : `Decrease ${label}`
+        }
         {...makeHandlers(bottomDelta)}
       >
+        {sublabelBottom && (
+          <span className="stepper-rail-zone-label">{sublabelBottom}</span>
+        )}
         <svg
           className="stepper-rail-chevron stepper-rail-chevron--down"
           viewBox="0 0 24 24"
@@ -255,11 +272,11 @@ export function MobileLoraBlendStepper() {
   }
   const nameOf = (id: string | undefined) =>
     id ? catalog.find((c) => c.id === id)?.name ?? id : null;
+  // With invert=true: top button decreases blend → more LoRA A;
+  // bottom button increases blend → more LoRA B. Pair the per-chevron
+  // labels accordingly so the user reads "tap up to get more <A>".
   const a = nameOf(ids[0]);
   const b = nameOf(ids[1]);
-  // Suppress the sublabel until both LoRAs in the pair are known —
-  // before the catalog loads we'd otherwise render "— ↔ —" as noise.
-  const sublabel = a && b ? `${a} ↔ ${b}` : undefined;
 
   return (
     <MobileStepperRail
@@ -267,7 +284,8 @@ export function MobileLoraBlendStepper() {
       param="lora_blend"
       max={1.0}
       label="LoRA Blend"
-      sublabel={sublabel}
+      sublabelTop={a ?? undefined}
+      sublabelBottom={b ?? undefined}
       invert
       invertFill
     />

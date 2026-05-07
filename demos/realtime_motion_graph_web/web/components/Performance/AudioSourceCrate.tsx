@@ -107,7 +107,10 @@ export function AudioSourceCrate() {
       while (useCustomTracksStore.getState().has(chosen)) {
         chosen = `${baseName} (${i++})`;
       }
-      addCustomTrack(chosen, decoded);
+      // Pass the original File so consumers that need the encoded bytes
+      // later (e.g. saved-sessions persistence in the parent webapp) can
+      // recover them without re-prompting the user.
+      addCustomTrack(chosen, decoded, file);
       setFixture(chosen);
       setStatus(useSessionStore.getState().status, "");
     } catch (e) {

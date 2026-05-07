@@ -982,10 +982,16 @@ body[data-mode="graph"] #install-video-area .focal-side-blur { display: none; }
    the left/right bars stop short of the top/bottom corners. */
 .install-edge-top {
   top: 0;
-  left: var(--hud-thickness);
-  /* Stop short of the halo badge (which sits at right: hud + 24, width 44 →
-     left edge at hud + 68). 12px gap so the ribbon at fill=1 reads as
-     terminating at the halo without crowding it. */
+  /* Bookended on BOTH sides by corner anchors. Right inset terminates
+     before the halo badge (right: hud + 24, width 44 → left edge at
+     hud + 68; 12px gap = hud + 80). Left inset reserves room for an
+     anchor of comparable scale to the halo plus a generous 64px breathing
+     gap before the ribbon begins (left: hud + 144). The asymmetric gap
+     accommodates a downstream consumer with a hard-edged rectangular
+     anchor — demon-public-demo's saved-sessions Library cassette —
+     where the halo's soft writhing ring needs less air than a tilted
+     rectangle. With no consumer mounted, the slot is simply blank. */
+  left: calc(var(--hud-thickness) + 144px);
   right: calc(var(--hud-thickness) + 80px);
   height: var(--hud-thickness);
 }
@@ -1079,10 +1085,11 @@ body[data-mode="graph"] #install-video-area .focal-side-blur { display: none; }
    that extend past the host into the central gutter. */
 .desktop-edge-drag[data-side="top"] {
   top: 0;
-  left: var(--hud-thickness);
-  /* Match .install-edge-top's shortened right inset so the drag rect
-     ends 12px before the halo badge — fraction=1 maps to "just before
-     the halo" instead of "under the halo". */
+  /* Match .install-edge-top's shortened insets on BOTH sides so the
+     drag rect aligns with the visible ribbon at all fractions. With no
+     left-corner anchor mounted, the left side simply has a blank
+     reserved slot — drag still works between the two terminators. */
+  left: calc(var(--hud-thickness) + 144px);
   right: calc(var(--hud-thickness) + 80px);
   height: calc(var(--hud-thickness) + var(--ribbon-bleed));
   cursor: ew-resize;
@@ -4100,15 +4107,46 @@ body[data-mode="graph"] #install-video-area .focal-side-blur { display: none; }
   transform: rotate(180deg);
   white-space: nowrap;
 }
-.stepper-rail-sublabel {
+/* Per-chevron labels rendered next to the up/down arrows when a stepper
+ * needs a directional cue (e.g. LoRA Blend pairs each chevron with a
+ * track name so the user reads "tap up to get more <A>"). Positioned
+ * absolutely just inside the screen edge of the rail and overflowing
+ * inward — the rail's natural overflow:visible allows this. */
+.stepper-rail-zone { position: relative; }
+.stepper-rail-zone-label {
+  position: absolute;
   font-family: var(--font-mono);
-  font-size: 0.5em;
-  letter-spacing: 0.1em;
+  font-size: 0.62em;
+  font-weight: 600;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--text-dim);
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
+  color: var(--text);
   white-space: nowrap;
+  pointer-events: none;
+  /* Strong shadow so the label stays legible over the busy stage (the
+   * graph, ribbons, and audio-reactive bloom can all sit behind it). */
+  text-shadow:
+    0 0 10px rgba(0, 0, 0, 0.95),
+    0 0 4px rgba(0, 0, 0, 0.95);
+}
+.stepper-rail--right .stepper-rail-zone-label {
+  /* Sit just inside the rail's left edge — visible on the screen
+   * interior side, away from the screen edge where the chevron lives. */
+  right: 100%;
+  margin-right: 6px;
+  text-align: right;
+}
+.stepper-rail--left .stepper-rail-zone-label {
+  left: 100%;
+  margin-left: 6px;
+}
+/* Vertically align with the chevron in each zone. The up-chevron sits
+ * at padding-top: 8px; down-chevron at padding-bottom: 14px. */
+.stepper-rail-zone--up .stepper-rail-zone-label {
+  top: 16px;
+}
+.stepper-rail-zone--down .stepper-rail-zone-label {
+  bottom: 22px;
 }
 
 /* Hide the perimeter writhe ribbons + edge labels on mobile. The new
