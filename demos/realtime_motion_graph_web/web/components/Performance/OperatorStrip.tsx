@@ -200,7 +200,7 @@ export function OperatorStrip() {
         SMOOTH: {smooth ? `${(smoothMs / 1000).toFixed(smoothMs < 1000 ? 2 : 1)}s` : "OFF"}
       </button>
       <select
-        className="key-select"
+        className="fixture-select"
         value={String(smoothMs)}
         disabled={!smooth}
         onChange={(e) => setSmoothMs(parseInt(e.target.value, 10))}

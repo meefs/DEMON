@@ -184,7 +184,7 @@ export function useRenderLoop(refs: Refs) {
       }
 
       hud.draw(frac, { transparentBg: false });
-      graph.draw(kick);
+      graph.draw(kick, now);
 
       // Drive ribbons. The top-edge bar's --fill is the denoise slider; the
       // L/R bars track the first/second active LoRA. For Phase 8 just feed

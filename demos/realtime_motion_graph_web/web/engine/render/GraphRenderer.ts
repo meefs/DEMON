@@ -1,10 +1,17 @@
 // Parameter-history graph display. Maintains a rolling buffer per signal
 // and renders glowing polylines + a playhead.
 //
-// Phase 4 perf note: ctx.filter:blur is software-rendered in many browsers;
-// reduce blur intensity slightly vs. the original (4px → 3px baseline) to
-// keep frame budget healthy. Visually nearly identical at typical pulse
-// values.
+// Glow uses the GPU-accelerated shadowBlur path (not ctx.filter:blur,
+// which falls back to software in Skia). The glow pass is intentionally
+// dialed back from earlier iterations — at full pulse the bloom should
+// read as a gentle in-color smear, not an additive white flash. Tuning
+// knobs live in the per-line loop below; bump them in lockstep if the
+// pulse needs to read more aggressively again.
+//
+// Independently of pulse, each signal renders a small orbital dot at its
+// playhead intersection (a colored disc + a white satellite on a slow
+// orbit driven by `now`). Echoes the cursor's 4-particle constellation
+// so the graph never reads as frozen between samples.
 
 import { SLIDER_META, type SliderMeta } from "@/types/engine";
 
@@ -85,11 +92,68 @@ interface History {
   filled: number;
 }
 
+// Beat-triggered confetti sparks (cursor.ts vocabulary). Spawned in
+// starburst patterns from each satellite on the rising edge of `pulse`,
+// then aged + simulated under gravity until they fade out. Stateful
+// across frames; capped at MAX_SPARKS so dense music can't run away.
+interface Spark {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  age: number;
+  life: number;
+  r: number;
+  g: number;
+  b: number;
+}
+
+// Spark size + physics lifted from engine/cursor.ts confetti — same
+// disc, same speed range, same gravity, same life. Direction is
+// different though: a cursor click is stationary, so confetti goes
+// radial-random; a satellite is moving along its orbit, so sparks shed
+// in its direction of motion (tangent ± a narrow cone) → reads as a
+// comet trail rather than a puff. Gravity arcs the trail downward
+// naturally, no upward bias needed.
+const SPARK_GRAVITY = 0.16; // matches GRAVITY in cursor.ts
+const SPARK_RADIUS = 2; // matches SPARK_RADIUS in cursor.ts (4px diameter)
+const SPARK_MIN_SPEED = 3.2; // matches CONFETTI_MIN_SPEED
+const SPARK_MAX_SPEED = 7.0; // matches CONFETTI_MAX_SPEED
+const SPARK_LIFE_MS = 900; // matches CONFETTI_LIFE_MS (±100ms jitter applied per spark)
+const SPARK_CONE_RAD = Math.PI / 7; // ~25° spread around the satellite's tangent
+const SPARKS_PER_BEAT = 8;
+const MAX_SPARKS = 240;
+const BEAT_THRESH = 0.4; // pulse threshold for "kick is happening"
+
+// Per-line firing gate. Each beat, every line independently rolls
+// against `fireProb`, which scales linearly with the kick's peak
+// strength: soft kicks fire only ~40% of lines (sparse, syncopated),
+// peak kicks fire ~100% (full swarm). After firing, a line is muted
+// for COOLDOWN_MIN..COOLDOWN_MAX ms — independent across lines, so
+// dense music desyncs naturally instead of repeating in lockstep.
+const FIRE_PROB_AT_THRESHOLD = 0.4;
+const FIRE_PROB_AT_PEAK = 1.0;
+const COOLDOWN_MIN_MS = 100;
+const COOLDOWN_MAX_MS = 400;
+
 export class GraphRenderer {
   readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly histories: Map<string, History> = new Map();
   private readonly _resizeObs: ResizeObserver;
+  private readonly _sparks: Spark[] = [];
+  // Cooldown timestamps per line — `now`-domain wall-clock millis after
+  // which the line is eligible to fire again.
+  private readonly _lineCooldowns: Map<string, number> = new Map();
+  // Beat detection state — track whether pulse is currently above
+  // threshold and the peak it's hit during this above-threshold span.
+  // Firing on the falling edge (when pulse drops back below threshold)
+  // means we know the kick's actual peak strength, not just the
+  // rising-edge value (always ≈ threshold). ~50–100ms of perceptual
+  // latency from kick onset; well within sync tolerance.
+  private _aboveThresh = false;
+  private _peakPulse = 0;
+  private _lastNow = 0;
   private w = 1;
   private h = 1;
 
@@ -135,7 +199,7 @@ export class GraphRenderer {
     }
   }
 
-  draw(pulse = 0): void {
+  draw(pulse = 0, now: number = performance.now()): void {
     // ResizeObserver in the constructor already keeps {w, h} in sync,
     // including the display:none → block transition. The legacy
     // getBoundingClientRect() self-heal that used to live here forced a
@@ -194,15 +258,15 @@ export class GraphRenderer {
         else ctx.lineTo(x, y);
       }
 
-      if (pulse > 0.05) {
+      if (pulse > 0.1) {
         ctx.save();
         ctx.globalCompositeOperation = "lighter";
-        ctx.shadowColor = `rgba(${r},${g},${b},${0.8 + 0.2 * pulse})`;
-        ctx.shadowBlur = 3 + 2 * pulse;
+        ctx.shadowColor = `rgba(${r},${g},${b},${0.25 + 0.25 * pulse})`;
+        ctx.shadowBlur = 1 + 1.5 * pulse;
         ctx.shadowOffsetX = 0;
         ctx.shadowOffsetY = 0;
-        ctx.strokeStyle = `rgba(${r},${g},${b},${0.6 + 0.4 * pulse})`;
-        ctx.lineWidth = 3 + 2 * pulse;
+        ctx.strokeStyle = `rgba(${r},${g},${b},${0.3 + 0.4 * pulse})`;
+        ctx.lineWidth = 1.5 + 1.5 * pulse;
         ctx.stroke();
         ctx.restore();
       }
@@ -211,6 +275,162 @@ export class GraphRenderer {
       ctx.strokeStyle = `rgba(${r},${g},${b},1)`;
       ctx.lineWidth = 1;
       ctx.stroke();
+    }
+
+    // Whimsical orbital dots + beat-triggered sparks. Each signal gets
+    // a colored disc anchored on the line at the playhead, plus a
+    // colored satellite orbiting it. Speed and radius are hashed from
+    // the line name (cursor.ts:47-50 PARTICLE_CONFIG vocabulary) so the
+    // cluster reads as a flock, not a metronome — different lines orbit
+    // at different rates, in different directions, on different shells.
+    //
+    // Orbits are time-driven so the cluster never freezes between data
+    // samples. When an audio kick happens, each satellite has an
+    // independent chance to fire a comet trail of palette-colored
+    // sparks along its tangent — chance scales with the kick's peak
+    // strength (soft kicks: sparse syncopation, peak kicks: full
+    // swarm), gated by a per-line cooldown so dense music desyncs
+    // organically instead of marching in lockstep. Sparks live in
+    // `this._sparks`, capped at MAX_SPARKS.
+    {
+      const dt = this._lastNow ? Math.min(50, now - this._lastNow) : 16;
+      this._lastNow = now;
+      const dtScale = dt / 16;
+
+      // Falling-edge peak detection: arm when pulse crosses threshold,
+      // track the max while above, fire on the frame that drops back
+      // below. `beatPulse` is the peak strength observed during the
+      // above-threshold span — used to scale per-line fire probability.
+      let beat = false;
+      let beatPulse = 0;
+      if (pulse > BEAT_THRESH) {
+        this._aboveThresh = true;
+        if (pulse > this._peakPulse) this._peakPulse = pulse;
+      } else if (this._aboveThresh) {
+        beat = true;
+        beatPulse = this._peakPulse;
+        this._aboveThresh = false;
+        this._peakPulse = 0;
+      }
+      const fireProb =
+        FIRE_PROB_AT_THRESHOLD +
+        (FIRE_PROB_AT_PEAK - FIRE_PROB_AT_THRESHOLD) *
+          Math.min(
+            1,
+            Math.max(0, (beatPulse - BEAT_THRESH) / (1 - BEAT_THRESH)),
+          );
+
+      const orbitTheta = (now / 1800) * Math.PI * 2; // ~1.8s base period
+      const baseOrbitR = 6 * (1 + 0.4 * pulse);
+      const pxPerSample = w / (VISIBLE_SAMPLES - 1);
+      const samplesFromHead = Math.round((w - playheadX) / pxPerSample);
+
+      ctx.save();
+      ctx.globalCompositeOperation = "source-over";
+      ctx.shadowBlur = 0;
+
+      for (const [name, hist] of this.histories) {
+        const n = Math.min(hist.filled, VISIBLE_SAMPLES);
+        if (n < 2 || samplesFromHead >= n) continue;
+        const headIdx =
+          (hist.head - 1 - samplesFromHead + HISTORY_LEN) % HISTORY_LEN;
+        const v = hist.buf[headIdx];
+        const yAtHead = h - Y_PAD - v * (h - 2 * Y_PAD);
+        const [r, g, b] = _colorFor(name);
+
+        // Hash → phase, spin direction, speed mul ∈ [0.7, 1.4],
+        // radius mul ∈ [0.85, 1.15]. Different bits feed each so a
+        // small name change scrambles all four — no two signals end up
+        // visually paired by accident.
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) {
+          hash = (hash * 31 + name.charCodeAt(i)) | 0;
+        }
+        const phase = ((Math.abs(hash) % 1000) / 1000) * Math.PI * 2;
+        const dir = hash & 1 ? 1 : -1;
+        const speedMul = 0.7 + ((Math.abs(hash >> 5) % 1000) / 1000) * 0.7;
+        const radiusMul =
+          0.85 + ((Math.abs(hash >> 11) % 1000) / 1000) * 0.3;
+
+        const orbitR = baseOrbitR * radiusMul;
+        const angle = phase + dir * orbitTheta * speedMul;
+        const satX = playheadX + Math.cos(angle) * orbitR;
+        const satY = yAtHead + Math.sin(angle) * orbitR;
+
+        // Disc anchored on the line.
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.beginPath();
+        ctx.arc(playheadX, yAtHead, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Colored satellite head (slightly larger than the line disc so
+        // it reads as the lead element of the pair).
+        ctx.beginPath();
+        ctx.arc(satX, satY, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Beat → comet trail shed from the satellite along its tangent.
+        // Tangent direction is perpendicular to the radial, signed by
+        // orbit `dir`, so sparks always fly in the direction of motion.
+        // Narrow ±25° cone keeps them tightly behind the satellite
+        // instead of fanning out; gravity arcs the trail downward.
+        //
+        // Two gates layer here: per-line probability (scales with kick
+        // strength via fireProb) and an independent cooldown so a line
+        // that just fired doesn't immediately re-fire on the next beat.
+        // Together they break the unison and add organic syncopation.
+        const eligibleAt = this._lineCooldowns.get(name) ?? 0;
+        if (beat && now >= eligibleAt && Math.random() < fireProb) {
+          this._lineCooldowns.set(
+            name,
+            now + COOLDOWN_MIN_MS + Math.random() * (COOLDOWN_MAX_MS - COOLDOWN_MIN_MS),
+          );
+          const tangentAngle = angle + dir * (Math.PI / 2);
+          for (let i = 0; i < SPARKS_PER_BEAT; i++) {
+            if (this._sparks.length >= MAX_SPARKS) this._sparks.shift();
+            const sa =
+              tangentAngle + (Math.random() - 0.5) * 2 * SPARK_CONE_RAD;
+            const sp =
+              SPARK_MIN_SPEED +
+              Math.random() * (SPARK_MAX_SPEED - SPARK_MIN_SPEED);
+            this._sparks.push({
+              x: satX,
+              y: satY,
+              vx: Math.cos(sa) * sp,
+              vy: Math.sin(sa) * sp,
+              age: 0,
+              life: SPARK_LIFE_MS - 100 + Math.random() * 200,
+              r,
+              g,
+              b,
+            });
+          }
+        }
+      }
+
+      // Sparks — physics + render + cull. Walking backwards so splice
+      // doesn't shift indices we still need to visit.
+      for (let i = this._sparks.length - 1; i >= 0; i--) {
+        const s = this._sparks[i];
+        s.age += dt;
+        if (s.age >= s.life) {
+          this._sparks.splice(i, 1);
+          continue;
+        }
+        s.vy += SPARK_GRAVITY * dtScale;
+        s.x += s.vx * dtScale;
+        s.y += s.vy * dtScale;
+        const f = s.age / s.life;
+        const alpha = 1 - f;
+        const radius = SPARK_RADIUS * (1 - f * 0.7);
+        if (radius <= 0.1) continue;
+        ctx.fillStyle = `rgba(${s.r},${s.g},${s.b},${alpha.toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
     }
 
     // Playhead — same shadowBlur trick. Glow halo + crisp 1px line.

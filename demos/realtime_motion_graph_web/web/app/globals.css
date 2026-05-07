@@ -168,6 +168,13 @@ body.cursor-hidden nextjs-portal * {
   z-index: 111;
   opacity: 1;
   transition: opacity 280ms cubic-bezier(.2, .8, .2, 1);
+  /* Force a dedicated GPU compositor layer so unrelated repaints (overlays
+     opening, slider drags) never pull cursor pixels back through the main
+     paint. Pairs with `desynchronized: true` on the 2D context in
+     engine/cursor.ts to keep input-to-photon latency tight. */
+  transform: translateZ(0);
+  will-change: transform;
+  contain: paint;
 }
 
 body.cursor-idle .cursor-canvas { opacity: 0; }
@@ -1819,7 +1826,7 @@ body[data-mode="graph"] #install-video-area .focal-side-blur { display: none; }
   font-family: var(--font-mono);
   border-radius: var(--radius-sm);
   padding: 6px 10px;
-  min-height: 32px;
+  min-height: 44px;
   font-size: 0.7em;
   max-width: 240px;
   transition: border-color 120ms, color 120ms;

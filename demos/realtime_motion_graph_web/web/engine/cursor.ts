@@ -115,7 +115,12 @@ export function initCursor(): CursorHandle {
     ".cursor-canvas",
   ) as HTMLCanvasElement | null;
   if (!canvasLookup) return { tick: () => {}, destroy: () => {} };
-  const ctxLookup = canvasLookup.getContext("2d");
+  // `desynchronized: true` is the spec'd low-latency path for
+  // input-following overlays — it lets the browser bypass the standard
+  // compositor frame queue when possible, cutting mousemove→photon by
+  // ~1 frame in Chromium. No-op fallback elsewhere. Pairs with the GPU
+  // layer hint on .cursor-canvas in app/globals.css.
+  const ctxLookup = canvasLookup.getContext("2d", { desynchronized: true });
   if (!ctxLookup) return { tick: () => {}, destroy: () => {} };
   // Hold non-null aliases so the closures below (resize, tick, destroy)
   // don't lose narrowing across the function-declaration boundary.
@@ -125,7 +130,10 @@ export function initCursor(): CursorHandle {
   // Backing-store size = window inner * DPR. CSS-style size = window
   // inner. setTransform makes 1 unit in our draw calls = 1 CSS px.
   function resize() {
-    const dpr = window.devicePixelRatio || 1;
+    // Cap DPR at 2 (matches GraphRenderer). On 3×-DPR phones the extra
+    // fragment cost — ~2.25× per frame for a full-viewport canvas — is
+    // imperceptible on solid 2-3px discs.
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
     const w = window.innerWidth;
     const h = window.innerHeight;
     canvas.width = Math.max(1, Math.floor(w * dpr));
