@@ -17,6 +17,7 @@ import { useRenderLoop } from "@/hooks/useRenderLoop";
 import { useScheduledCurves } from "@/hooks/useScheduledCurves";
 import { useStartSession } from "@/hooks/useStartSession";
 import { useVideoLayer } from "@/hooks/useVideoLayer";
+import { useConfig } from "@/lib/config";
 import { useCurveStore } from "@/store/useCurveStore";
 import { usePerformanceStore } from "@/store/usePerformanceStore";
 import { useSessionStore } from "@/store/useSessionStore";
@@ -62,7 +63,8 @@ export function PerformanceShell() {
   useRecording();
   useFixtureSwap();
   useEdgeLoraBinding();
-  useIdleReset(0);
+  const config = useConfig();
+  useIdleReset(config.reset_seconds);
 
   const startSession = useStartSession();
   const status = useSessionStore((s) => s.status);

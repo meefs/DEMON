@@ -1,0 +1,69 @@
+{
+  "_comment": "Initial settings for the DEMON installation. Edit and refresh — no rebuild needed. Slider max/step lives in types/engine.ts (SLIDER_META); only the per-control starting value is set here. Schema and defaults: web/lib/config.ts.",
+
+  "engine": {
+    "sde": false,
+    "lora": true,
+    "depth": 4,
+    "vae_window": 6,
+    "crop": 0,
+    "steps": 8,
+    "fast_vae": false,
+    "key": "G# minor",
+    "_enabled_loras_help": "Filename stems (no .safetensors) to auto-enable on first catalog load. Empty = count-rule (first two from the sorted catalog, with name-fallback per slot — see useLoraStore.ts).",
+    "enabled_loras": []
+  },
+
+  "prompts": {
+    "a": "heavy dubstep, deathstep, afxdump, growl heavy bass distortion",
+    "b": "daft punk style, beautiful, four to the floor, angelic",
+    "blend": 0.4
+  },
+
+  "controls": {
+    "denoise": 0.7,
+    "_lora_default_strength_help": "Initial value applied to any LoRA strength slider whose server-reported strength is 0 (current Python backend behavior). Auto-enabled LoRAs land here on first paint.",
+    "lora_default_strength": 1.4,
+    "hint_strength": 1.4,
+
+    "feedback": 0.0,
+    "shift": 0.5,
+    "noise_share": 0.0,
+    "ode_noise": 0.0,
+
+    "ch_g0": 1.0,
+    "ch_g1": 1.0,
+    "ch_g2": 1.0,
+    "ch_g3": 1.0,
+    "ch_g4": 1.0,
+    "ch_g5": 1.0,
+    "ch_g6": 1.0,
+    "ch_g7": 1.0,
+
+    "ch13": 1.0,
+    "ch14": 1.0,
+    "ch19": 1.0,
+    "ch23": 1.0,
+    "ch29": 1.0,
+    "ch56": 1.0,
+
+    "dcw_enabled": true,
+    "dcw_mode": "double",
+    "dcw_scaler": 0.05,
+    "dcw_high_scaler": 0.02,
+    "dcw_wavelet": "haar"
+  },
+
+  "seed": 0,
+
+  "_effects_help": "Audio-reactive video shader pipeline (parallax + bloom-on-kick). Both effects pulse with the kick envelope; the perimeter ribbons + DEMON wordmark also pulse with kick via a CSS variable.",
+  "effects": {
+    "parallax_strength": 0.4,
+    "bloom_on_kick": 0.3,
+    "bloom_threshold": 0.15,
+    "warp_strength": 0.4
+  },
+
+  "_reset_seconds_help": "Idle timeout. After this many seconds of no interaction (pointer, key, or MIDI), every control reverts to the defaults above. Set to 0 to disable.",
+  "reset_seconds": 0
+}

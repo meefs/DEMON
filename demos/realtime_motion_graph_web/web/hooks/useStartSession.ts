@@ -7,6 +7,7 @@ import { listFixtures, loadFixtureAudio } from "@/engine/audio/loadFixture";
 import { defaultWsUrl } from "@/engine/podUrl";
 import { RemoteBackend, SLICE_FLAG_DELTA } from "@/engine/protocol";
 import { getApiKey } from "@/engine/rtmgConfig";
+import { getConfig } from "@/lib/config";
 import { useLoraStore } from "@/store/useLoraStore";
 import { usePerformanceStore } from "@/store/usePerformanceStore";
 import { useSessionStore } from "@/store/useSessionStore";
@@ -43,25 +44,26 @@ function resolveWsUrl(serverWsUrl: string | null): string {
 function buildConfig(fixtureName: string): SessionConfig {
   const perf = usePerformanceStore.getState();
   const lora = useLoraStore.getState();
+  const cfg = getConfig().engine;
   const enabledLoras = Array.from(lora.enabled);
   const loraStrengths: Record<string, number> = {};
   for (const id of enabledLoras) {
     const v = lora.strengths[id];
     if (typeof v === "number") loraStrengths[id] = v;
   }
+  // Engine fields come from web/public/config.json (overridable per
+  // installation). Default depth=4 over depth=8: ~½ VRAM, ~⅛ param
+  // latency, ~11.3/s vs 12.3/s throughput on a 32 GB card. The VRAM
+  // headroom is what unlocks longer audio uploads (cap lives in
+  // loadFixture.ts; depth=4 makes future bumps VRAM-safe).
   return {
-    sde: false,
-    lora: true,
-    // depth=4 over depth=8: ~½ VRAM, ~⅛ param latency, ~11.3/s vs 12.3/s
-    // throughput on a 32 GB card per Ryan's measurements. The VRAM
-    // headroom is what unlocks longer audio uploads (the user-facing
-    // cap is the WebSocket frame size in loadFixture.ts; depth=4
-    // makes future bumps to that cap VRAM-safe).
-    depth: 4,
-    vae_window: 6,
-    crop: 0,
-    steps: 8,
-    fast_vae: false,
+    sde: cfg.sde,
+    lora: cfg.lora,
+    depth: cfg.depth,
+    vae_window: cfg.vae_window,
+    crop: cfg.crop,
+    steps: cfg.steps,
+    fast_vae: cfg.fast_vae,
     key: perf.activeKey,
     enabled_loras: enabledLoras,
     prompt: perf.promptA,

@@ -7,6 +7,7 @@ import { kickRms } from "@/engine/render/audioFeatures";
 import { EffectsRenderer } from "@/engine/render/EffectsRenderer";
 import { GraphRenderer } from "@/engine/render/GraphRenderer";
 import { HUD } from "@/engine/render/HUD";
+import { getConfig, subscribeConfig } from "@/lib/config";
 import {
   destroyHaloRibbon,
   destroyRibbons,
@@ -83,18 +84,24 @@ export function useRenderLoop(refs: Refs) {
       : null;
 
     let effects: EffectsRenderer | null = null;
+    let unsubEffectsConfig: (() => void) | null = null;
     if (effectsEl) {
       try {
-        effects = new EffectsRenderer(effectsEl);
-        // Sensible defaults; Phase 12 / future hooks may bind these to
-        // sliders. Static values are fine because the kick/time uniforms
-        // are the per-frame variation.
-        effects.setParallaxStrength(0.4);
-        effects.setBloomOnKick(0.3);
-        effects.setBloomThreshold(0.15);
-        effects.setWarpStrength(0.4);
-        effects.setDubstep(0);
-        effects.setDaftPunk(0);
+        const e = new EffectsRenderer(effectsEl);
+        effects = e;
+        e.setDubstep(0);
+        e.setDaftPunk(0);
+        // Effects values come from web/public/config.json. Re-apply on
+        // every applyConfig() so an async-arriving config or future
+        // "Reload config" affordance lands without a page refresh.
+        const applyFx = (c: ReturnType<typeof getConfig>) => {
+          e.setParallaxStrength(c.effects.parallax_strength);
+          e.setBloomOnKick(c.effects.bloom_on_kick);
+          e.setBloomThreshold(c.effects.bloom_threshold);
+          e.setWarpStrength(c.effects.warp_strength);
+        };
+        applyFx(getConfig());
+        unsubEffectsConfig = subscribeConfig(applyFx);
       } catch (e) {
         // WebGL2 unavailable → fall back to the raw <video> the canvas
         // overlays. App still works without bloom/parallax.
@@ -258,6 +265,7 @@ export function useRenderLoop(refs: Refs) {
       document.removeEventListener("visibilitychange", onVisibility);
       sessionUnsub();
       mirrorUnsub?.();
+      unsubEffectsConfig?.();
       hud.destroy();
       graph.destroy();
       effects?.destroy();

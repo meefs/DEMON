@@ -87,6 +87,11 @@ export function SliderGroup({ param, label, max, kbd }: Props) {
     let engaged = false;
     let engageTimer: ReturnType<typeof setTimeout> | null = null;
     const ENGAGE_MS = 50;
+    // DAW-style double-click-to-reset. Tracking pointerdown timestamps
+    // ourselves (instead of leaning on the synthetic `dblclick` event) is
+    // reliable in the presence of pointer capture and cross-browser quirks.
+    let lastDownAt = 0;
+    const DBLCLICK_MS = 350;
 
     const commit = () => {
       if (!cachedRect) return;
@@ -110,6 +115,17 @@ export function SliderGroup({ param, label, max, kbd }: Props) {
     const onPointerDown = (e: PointerEvent) => {
       // Right-click reserved for MIDI-learn.
       if (e.button !== 0) return;
+      const now = performance.now();
+      if (now - lastDownAt < DBLCLICK_MS) {
+        // Second click within the dblclick window: reset and bail before
+        // any drag state is set. Coexists with the long-press reset on
+        // mobile (useTactileSlider) — operators can use whichever feels
+        // natural.
+        usePerformanceStore.getState().resetSlider(param);
+        lastDownAt = 0;
+        return;
+      }
+      lastDownAt = now;
       dragging = true;
       engaged = false;
       cachedRect = el.getBoundingClientRect();
