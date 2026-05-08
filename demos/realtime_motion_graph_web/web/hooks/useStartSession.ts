@@ -199,9 +199,11 @@ export function useStartSession() {
 
     // "Hear the source first" gate: every fresh session starts with
     // denoise = 0 so the user hears the unmodified track. The top-edge
-    // ribbon's "drag to start" affordance prompts them to dial it up;
-    // the first value-changing drag flips remixStarted true.
-    usePerformanceStore.getState().setSlider("denoise", 0);
+    // ribbon glides smoothly from its current value down to 0 (instead
+    // of snapping) so the user sees the ribbon retreat as the prompt
+    // appears. The "drag to start" affordance prompts them to dial it
+    // back up; the first value-changing drag flips remixStarted true.
+    usePerformanceStore.getState().animateSliderTo("denoise", 0, 700);
     usePerformanceStore.getState().setRemixStarted(false);
 
     setSession(remote, player);

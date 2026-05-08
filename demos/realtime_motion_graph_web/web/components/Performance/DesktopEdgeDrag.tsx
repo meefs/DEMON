@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useLoraStore } from "@/store/useLoraStore";
 import { usePerformanceStore } from "@/store/usePerformanceStore";
+import { useSessionStore } from "@/store/useSessionStore";
 import {
   LORA_DEFAULT_STRENGTH_FRACTION,
   LORA_SIDE_VISIBLE_FLOOR,
@@ -67,6 +68,12 @@ export function DesktopEdgeDrag({ side }: Props) {
   // true (see onPointerUp below). Reset to false on every song load
   // by useStartSession / useFixtureSwap.
   const remixStarted = usePerformanceStore((s) => s.remixStarted);
+  // Don't show ANY hints until the session is actually live (track
+  // decoded, WebSocket connected, audio playing). Otherwise the
+  // prompt flashes during the loading-fixture / connecting phase
+  // before the user can do anything with it.
+  const sessionStatus = useSessionStore((s) => s.status);
+  const sessionReady = sessionStatus === "ready";
 
   const isTop = side === "top";
   const orientation: "horizontal" | "vertical" = isTop
@@ -276,7 +283,9 @@ export function DesktopEdgeDrag({ side }: Props) {
   // user has a stable visual anchor through "connecting" / catalog
   // updates. Drag on an empty slot is a no-op (data-empty guards
   // pointerdown).
-  const showHint = isTop ? !remixStarted : remixStarted && !hintDismissed;
+  const showHint =
+    sessionReady &&
+    (isTop ? !remixStarted : remixStarted && !hintDismissed);
 
   return (
     <div

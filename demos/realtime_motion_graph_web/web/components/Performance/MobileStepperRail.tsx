@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { displayLoraName } from "@/lib/loraLabels";
 import { useLoraStore } from "@/store/useLoraStore";
 import { usePerformanceStore } from "@/store/usePerformanceStore";
+import { useSessionStore } from "@/store/useSessionStore";
 import { SLIDER_META } from "@/types/engine";
 
 // Vertical stepper rail for the screen edges on phones in landscape mode.
@@ -265,8 +266,11 @@ export function MobileRemixStepper() {
   // the prompt, so we pulse the up chevron itself as the "do this"
   // affordance while remix hasn't started. Crossing denoise > 0 (via
   // the up chevron, MIDI, or any other path) flips the gate true.
+  // Held off until the session is actually ready so the pulse doesn't
+  // flash during the loading / connecting phase.
   const remixStarted = usePerformanceStore((s) => s.remixStarted);
   const denoise = usePerformanceStore((s) => s.sliderTargets["denoise"] ?? 0);
+  const sessionReady = useSessionStore((s) => s.status === "ready");
   useEffect(() => {
     if (!remixStarted && denoise > 0) {
       usePerformanceStore.getState().setRemixStarted(true);
@@ -278,7 +282,7 @@ export function MobileRemixStepper() {
       param="denoise"
       max={1.0}
       label="Remix Strength"
-      pulseUp={!remixStarted}
+      pulseUp={sessionReady && !remixStarted}
     />
   );
 }

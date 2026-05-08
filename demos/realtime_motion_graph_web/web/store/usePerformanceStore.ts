@@ -67,7 +67,7 @@ function saveNum(key: string, n: number): void {
 // `sliderValues` chases `sliderTargets` along a cubic ease-out tween.
 //
 // Slider UIs read `sliderTargets` so dragging feels immediate. The
-// param-sync tick (hooks/useParamSync.ts, 8 ms) reads `sliderValues`
+// param-sync tick (hooks/useParamSync.ts, 33 ms) reads `sliderValues`
 // so the engine sees the smoothed curve. MIDI knobs hit bumpSlider
 // repeatedly; each bump retargets and the tween chases without stutter.
 
@@ -134,6 +134,64 @@ function ensureTween(param: string): void {
 
 function cancelTween(param: string): void {
   tweens.delete(param);
+  dropTweens.delete(param);
+}
+
+// ── One-shot drop tweens ───────────────────────────────────────────────
+// The regular `tweens` machinery only animates `sliderValues` (the engine
+// value), assuming `sliderTargets` was set to its final destination
+// immediately so the UI snaps to where the user pointed. The "hear source
+// first" gate has the opposite need: when a song loads and we drop denoise
+// to 0, the visual ribbon SHOULD slide down (not jump), and the engine
+// SHOULD get the smooth ramp too. This tier drives both fields together
+// over a per-tween duration, independent of the global `smooth` toggle.
+// Cancelled implicitly by setSlider/cancelTween if the user grabs the
+// ribbon mid-drop.
+interface DropTween {
+  start: number;
+  startTime: number;
+  target: number;
+  durationMs: number;
+}
+const dropTweens = new Map<string, DropTween>();
+let dropTweenUnregister: (() => void) | null = null;
+
+function tickDropTweens(now: number): void {
+  if (dropTweens.size === 0) return;
+  const updates: Record<string, number> = {};
+  for (const [param, t] of dropTweens) {
+    const elapsed = now - t.startTime;
+    if (elapsed >= t.durationMs) {
+      updates[param] = t.target;
+      dropTweens.delete(param);
+      continue;
+    }
+    const k = elapsed / t.durationMs;
+    // Same cubic ease-out as the regular tween — snappy start, soft
+    // landing on zero so the ribbon doesn't slam into the rail edge.
+    const eased = 1 - Math.pow(1 - k, 3);
+    updates[param] = t.start + (t.target - t.start) * eased;
+  }
+  if (Object.keys(updates).length > 0) {
+    usePerformanceStore.setState((s) => ({
+      sliderValues: { ...s.sliderValues, ...updates },
+      sliderTargets: { ...s.sliderTargets, ...updates },
+    }));
+  }
+  if (dropTweens.size === 0 && dropTweenUnregister) {
+    dropTweenUnregister();
+    dropTweenUnregister = null;
+  }
+}
+
+function ensureDropTweenRunning(): void {
+  if (!dropTweenUnregister) {
+    dropTweenUnregister = frameScheduler.register(
+      "drop-tweens",
+      tickDropTweens,
+      { phase: "compute", budgetMs: 1 },
+    );
+  }
 }
 
 // ── Manual-override timestamps ─────────────────────────────────────────
@@ -259,6 +317,15 @@ interface PerformanceState {
   setPaused: (p: boolean) => void;
   togglePause: () => void;
   setRemixStarted: (b: boolean) => void;
+  /** Animate a slider from its current value to `target` over `durationMs`
+   *  using a cubic ease-out, driving BOTH `sliderTargets` and
+   *  `sliderValues` together (the visual ribbon and the engine value
+   *  glide in lockstep). Used by the per-song "hear source first" gate
+   *  to slide denoise down to 0 on each song load. Cancelled implicitly
+   *  if the user drags the ribbon mid-drop. Does not stamp a
+   *  manual-override timestamp (this is a system action, not a user
+   *  touch — curves should not defer to it). */
+  animateSliderTo: (param: string, target: number, durationMs: number) => void;
   setDcwEnabled: (b: boolean) => void;
   toggleDcw: () => void;
   setDcwMode: (m: DcwMode) => void;
@@ -388,6 +455,27 @@ export const usePerformanceStore = create<PerformanceState>((set) => ({
   setPaused: (p) => set({ paused: p }),
   togglePause: () => set((s) => ({ paused: !s.paused })),
   setRemixStarted: (b) => set({ remixStarted: b }),
+  animateSliderTo: (param, target, durationMs) => {
+    cancelTween(param);
+    const current =
+      usePerformanceStore.getState().sliderTargets[param] ?? 0;
+    const clamped = clampToMeta(param, target);
+    if (current === clamped || durationMs <= 0) {
+      // No motion needed — write both fields to land at target instantly.
+      set((s) => ({
+        sliderValues: { ...s.sliderValues, [param]: clamped },
+        sliderTargets: { ...s.sliderTargets, [param]: clamped },
+      }));
+      return;
+    }
+    dropTweens.set(param, {
+      start: current,
+      startTime: performance.now(),
+      target: clamped,
+      durationMs,
+    });
+    ensureDropTweenRunning();
+  },
   setDcwEnabled: (b) => set({ dcwEnabled: b }),
   toggleDcw: () => set((s) => ({ dcwEnabled: !s.dcwEnabled })),
   setDcwMode: (m) => set({ dcwMode: m }),
