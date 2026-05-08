@@ -92,11 +92,21 @@ export function useFixtureSwap() {
         remote.addEventListener("swap_failed", onFail);
 
         const perf = usePerformanceStore.getState();
+        // Key is intentionally NOT sent: the server resolves via the
+        // new fixture's sidecar (or CNN-detects on a miss) and echoes
+        // the result in `swap_ready.key`, which we write into the
+        // dropdown via setKey(detail.key) above. Sending perf.activeKey
+        // here was the regression that made switching between test
+        // fixtures stick on the previous fixture's key — the dropdown's
+        // stale value was applied as `key_override` and beat the new
+        // fixture's sidecar.key on the server side.
+        // Operator overrides flow through the OperatorStrip dropdown's
+        // onChange handler (sendPrompt), not through swap_source.
         const sent = remote.sendSwapSource(
           interleaved,
           channels,
           perf.promptA,
-          perf.activeKey,
+          undefined,
           name,
         );
         if (!sent) {

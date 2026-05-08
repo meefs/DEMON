@@ -120,8 +120,14 @@ def _resolve_bpm_key_source(
       - audio-length truncation mismatch (e.g. operator's TRT profile
         cap is smaller than the natural fixture length)
 
-    ``key_override`` is the swap-source operator override; if supplied,
-    it wins over both sidecar.key and detect_key.
+    ``key_override`` is the operator's manual key override coming from
+    the swap_source path. It is **only** consulted on the live path —
+    when a sidecar hits, the sidecar's BPM and key are authoritative
+    for the test fixture (a previous fixture's dropdown value or any
+    other client-side staleness must not be allowed to mask the
+    fixture's recorded ground truth). After the swap, post-hoc dropdown
+    edits flow through ``mtype == "prompt"`` instead, where key
+    overrides do apply.
     """
     sc = _try_load_sidecar(fixture_name, checkpoint=checkpoint, samples=samples)
 
@@ -133,7 +139,19 @@ def _resolve_bpm_key_source(
             context_latent=Latent(tensor=sc.context_latent.to(device, dtype).contiguous()),
         )
         bpm = sc.bpm
-        key = key_override or sc.key
+        # Sidecar is the source of truth for known fixtures; do NOT
+        # apply key_override here. (Earlier this read
+        # `key = key_override or sc.key`, which let the previous
+        # fixture's dropdown value, sent on swap_source, beat the new
+        # fixture's recorded key — e.g. a swap from low_fi (G minor)
+        # to prog_rock (E minor) printed
+        # `sidecar hit (prog_rock_..._enm.wav) ... key='G minor'`.)
+        key = sc.key
+        if key_override and key_override != sc.key:
+            print(
+                f"[Server] sidecar hit ({fixture_name}): ignoring "
+                f"key_override={key_override!r}; sidecar wins (key={sc.key!r})"
+            )
         print(f"[Server] sidecar hit ({fixture_name}): bpm={bpm} key={key!r}")
         return source, bpm, key
 

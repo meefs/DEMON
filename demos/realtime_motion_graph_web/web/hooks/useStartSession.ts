@@ -65,12 +65,17 @@ function buildConfig(fixtureName: string): SessionConfig {
     crop: cfg.crop,
     steps: cfg.steps,
     fast_vae: cfg.fast_vae,
-    key: perf.activeKey,
     enabled_loras: enabledLoras,
     prompt: perf.promptA,
     lora_strengths: loraStrengths,
     // Lets the server look up a precomputed sidecar (BPM, key, source
     // latent, context_latent). Absent / unknown name -> live path.
+    // Key is intentionally not sent: the server's session-init resolver
+    // ignores config.key anyway and uses sidecar.key for known fixtures
+    // (or CNN-detects on a miss). The result echoes back in `ready.key`
+    // and `setDetected` writes it into the dropdown. Sending the
+    // dropdown's stale value here would only re-introduce the
+    // override-wins-over-sidecar regression.
     fixture_name: fixtureName,
   };
 }
