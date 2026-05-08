@@ -2,11 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { decodeAudioFile, listFixtures, pickDefaultFixture } from "@/engine/audio/loadFixture";
+import {
+  decodeAudioFile,
+  listFixtures,
+  pickDefaultFixture,
+  type DecodedFixture,
+} from "@/engine/audio/loadFixture";
 import { LOCAL_MODE } from "@/lib/runtime";
 import { useCustomTracksStore } from "@/store/useCustomTracksStore";
 import { usePerformanceStore } from "@/store/usePerformanceStore";
 import { useSessionStore } from "@/store/useSessionStore";
+
+import { AlmostReadyDialog } from "./AlmostReadyDialog";
 
 // Mobile Lite-controls track picker. A horizontal scroll-snap row of fixture
 // chips followed by an "Upload your own" chip. Reuses the same fixture
@@ -48,6 +55,12 @@ export function LiteTrackCarousel() {
   const addCustomTrack = useCustomTracksStore((s) => s.add);
 
   const [uploading, setUploading] = useState(false);
+  const [pending, setPending] = useState<{
+    decoded: DecodedFixture;
+    fileName: string;
+    wasTrimmed: boolean;
+    originalFile: File;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
@@ -87,15 +100,16 @@ export function LiteTrackCarousel() {
     setUploading(true);
     setStatus(useSessionStore.getState().status, `Loading ${file.name}…`);
     try {
-      const decoded = await decodeAudioFile(file);
+      const { decoded, wasTrimmed } = await decodeAudioFile(file);
       const baseName = file.name;
       let chosen = baseName;
       let i = 1;
       while (useCustomTracksStore.getState().has(chosen)) {
         chosen = `${baseName} (${i++})`;
       }
-      addCustomTrack(chosen, decoded);
-      setFixture(chosen);
+      // Defer commit to the AlmostReadyDialog so cancel leaves the
+      // previously playing track alone.
+      setPending({ decoded, fileName: chosen, wasTrimmed, originalFile: file });
       setStatus(useSessionStore.getState().status, "");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -103,6 +117,19 @@ export function LiteTrackCarousel() {
     } finally {
       setUploading(false);
     }
+  }
+
+  function commitPending(keyOverride: string | null) {
+    if (!pending) return;
+    const { decoded, fileName, originalFile } = pending;
+    addCustomTrack(fileName, decoded, originalFile);
+    if (keyOverride) {
+      const perf = usePerformanceStore.getState();
+      perf.setPendingKeyOverride(keyOverride);
+      perf.setKey(keyOverride);
+    }
+    setFixture(fileName);
+    setPending(null);
   }
 
   const tracks: TrackOption[] = [
@@ -167,6 +194,20 @@ export function LiteTrackCarousel() {
           if (file) void onFilePicked(file);
         }}
       />
+
+      {pending && (
+        <AlmostReadyDialog
+          fileName={pending.fileName}
+          wasTrimmed={pending.wasTrimmed}
+          defaultKey={usePerformanceStore.getState().activeKey}
+          onContinue={({ keyOverride }) => commitPending(keyOverride)}
+          onPickAnother={() => {
+            setPending(null);
+            setTimeout(() => fileInputRef.current?.click(), 0);
+          }}
+          onClose={() => setPending(null)}
+        />
+      )}
     </div>
   );
 }

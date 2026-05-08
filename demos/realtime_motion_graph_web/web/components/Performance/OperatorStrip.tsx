@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { decodeAudioFile, listFixtures, pickDefaultFixture } from "@/engine/audio/loadFixture";
+import {
+  decodeAudioFile,
+  listFixtures,
+  pickDefaultFixture,
+  type DecodedFixture,
+} from "@/engine/audio/loadFixture";
 import { togglePauseAndAudio } from "@/engine/audio/togglePauseAndAudio";
 import { LOCAL_MODE } from "@/lib/runtime";
 import { useCurveStore } from "@/store/useCurveStore";
@@ -12,6 +17,7 @@ import { usePerformanceStore } from "@/store/usePerformanceStore";
 import { useSessionStore } from "@/store/useSessionStore";
 import { VALID_KEYSCALES } from "@/types/engine";
 
+import { AlmostReadyDialog } from "./AlmostReadyDialog";
 import { MidiBadge } from "./MidiBadge";
 import { RecordToggle } from "./RecordToggle";
 
@@ -19,6 +25,7 @@ export function OperatorStrip() {
   const [fixtures, setFixtures] = useState<string[]>([]);
   const fixture = usePerformanceStore((s) => s.fixture);
   const activeKey = usePerformanceStore((s) => s.activeKey);
+  const detectedKey = usePerformanceStore((s) => s.detectedKey);
   const kiosk = usePerformanceStore((s) => s.kiosk);
   const paused = usePerformanceStore((s) => s.paused);
   const showKbdHints = usePerformanceStore((s) => s.showKbdHints);
@@ -38,6 +45,15 @@ export function OperatorStrip() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Mirror of AudioSourceCrate's pending-upload state. The "Almost
+  // Ready" dialog gates the actual fixture swap so the previously
+  // playing track keeps playing if the user cancels.
+  const [pending, setPending] = useState<{
+    decoded: DecodedFixture;
+    fileName: string;
+    wasTrimmed: boolean;
+    originalFile: File;
+  } | null>(null);
 
   // The bottom-left <AudioSourceCrate /> is the primary track-picker; we
   // keep this dropdown + upload icon here as the power-user fallback that
@@ -65,7 +81,7 @@ export function OperatorStrip() {
     setUploading(true);
     setStatus(useSessionStore.getState().status, `Loading ${file.name}…`);
     try {
-      const decoded = await decodeAudioFile(file);
+      const { decoded, wasTrimmed } = await decodeAudioFile(file);
       // De-collide names: appending an index when the same filename is
       // uploaded twice keeps prior uploads selectable while letting the
       // new one win the dropdown. The decoded buffer is what the pod
@@ -76,8 +92,9 @@ export function OperatorStrip() {
       while (useCustomTracksStore.getState().has(chosen)) {
         chosen = `${baseName} (${i++})`;
       }
-      addCustomTrack(chosen, decoded);
-      setFixture(chosen);
+      // Defer addCustomTrack + setFixture to commitPending so cancelling
+      // leaves the previously playing track intact.
+      setPending({ decoded, fileName: chosen, wasTrimmed, originalFile: file });
       setStatus(useSessionStore.getState().status, "");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -85,6 +102,19 @@ export function OperatorStrip() {
     } finally {
       setUploading(false);
     }
+  }
+
+  function commitPending(keyOverride: string | null) {
+    if (!pending) return;
+    const { decoded, fileName, originalFile } = pending;
+    addCustomTrack(fileName, decoded, originalFile);
+    if (keyOverride) {
+      const perf = usePerformanceStore.getState();
+      perf.setPendingKeyOverride(keyOverride);
+      perf.setKey(keyOverride);
+    }
+    setFixture(fileName);
+    setPending(null);
   }
 
   // The pod's WS URL is allocated by the queue and not user-editable.
@@ -154,27 +184,38 @@ export function OperatorStrip() {
           if (file) void onFilePicked(file);
         }}
       />
-      <select
-        id="key-select"
-        className="fixture-select"
-        title="Musical key — sidecar / auto-detected; changes apply immediately"
-        value={activeKey}
-        onChange={(e) => {
-          const newKey = e.target.value;
-          setKey(newKey);
-          const remote = useSessionStore.getState().remote;
-          if (remote) {
-            const { promptA } = usePerformanceStore.getState();
-            remote.sendPrompt(promptA, newKey);
-          }
-        }}
+      <div
+        className="key-control-group"
+        title="Tells the model what key the song is in. Does not transpose audio."
       >
-        {VALID_KEYSCALES.map((k) => (
-          <option key={k} value={k}>
-            {k}
-          </option>
-        ))}
-      </select>
+        <span className="key-detected-readout">
+          Detected: <strong>{detectedKey ?? "—"}</strong>
+        </span>
+        <label className="key-override-label" htmlFor="key-select">
+          Override
+        </label>
+        <select
+          id="key-select"
+          className="fixture-select"
+          title="Override the model's key hint. Does not transpose audio."
+          value={activeKey}
+          onChange={(e) => {
+            const newKey = e.target.value;
+            setKey(newKey);
+            const remote = useSessionStore.getState().remote;
+            if (remote) {
+              const { promptA } = usePerformanceStore.getState();
+              remote.sendPrompt(promptA, newKey);
+            }
+          }}
+        >
+          {VALID_KEYSCALES.map((k) => (
+            <option key={k} value={k}>
+              {k}
+            </option>
+          ))}
+        </select>
+      </div>
       <button
         id="kiosk-toggle"
         className={`pause-btn${kiosk ? " active" : ""}`}
@@ -256,6 +297,20 @@ export function OperatorStrip() {
       >
         {paused ? "▶" : "⏸"}
       </button>
+
+      {pending && (
+        <AlmostReadyDialog
+          fileName={pending.fileName}
+          wasTrimmed={pending.wasTrimmed}
+          defaultKey={activeKey}
+          onContinue={({ keyOverride }) => commitPending(keyOverride)}
+          onPickAnother={() => {
+            setPending(null);
+            setTimeout(() => fileInputRef.current?.click(), 0);
+          }}
+          onClose={() => setPending(null)}
+        />
+      )}
     </div>
   );
 }
