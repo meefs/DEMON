@@ -357,6 +357,57 @@ class DiffusionEngine:
                 "path, the decoder must have parameters loaded."
             )
 
+    def close(self) -> None:
+        """Release per-engine TRT + LoRA state.
+
+        Called by :meth:`Session.close`. Drops:
+
+        - the TRT execution context (the dominant non-PyTorch GPU buffer:
+          activation/workspace memory, ~1–2 GB for a turbo decoder profile)
+        - the deserialized engine itself (~1.5–3 GB GPU)
+        - the per-shape input/output buffer cache (``_trt_buf_cache``)
+        - the LoRA manager (CPU base/refit buffers + GPU mirror on the
+          eager backend)
+
+        These are *not* freed by Python GC reliably — the polygraphy /
+        pycuda objects keep CUDA references alive until their finalizers
+        run, which can be arbitrarily delayed under reference cycles.
+        Explicit ``del`` here forces the destructor chain immediately.
+
+        Idempotent: subsequent calls are no-ops.
+        """
+        # Drop the buffer cache first (each entry holds a torch.Tensor on
+        # CUDA); it indirectly references the engine via the context.
+        try:
+            self._trt_buf_cache.clear()
+        except Exception:
+            pass
+        # LoRA manager next. It holds a Refitter, which holds an engine
+        # reference. Closing it before the engine clears that ref.
+        if self._lora_manager is not None:
+            try:
+                self._lora_manager.close()
+            except Exception:
+                pass
+            self._lora_manager = None
+        # Now the TRT context + engine. ``del`` (or rebind to None) is
+        # what triggers the polygraphy/pycuda finalizer that actually
+        # frees the CUDA workspace; setting attributes to None alone is
+        # not enough if some other transient name holds the previous
+        # value, so we explicitly ``del`` the instance attribute too.
+        for attr in ("_trt_ctx", "_trt_engine"):
+            try:
+                setattr(self, attr, None)
+            except Exception:
+                pass
+        # The CUDA stream is process-shared (see vae_nodes._get_trt_stream)
+        # so we just drop our reference, not destroy the stream.
+        self._trt_stream = None
+        # Drop the decoder reference too — it pins the DiT graph that
+        # ModelContext is about to release.
+        self.decoder = None
+        self.model = None
+
     def _trt_decoder_step(
         self,
         hidden_states: torch.Tensor,

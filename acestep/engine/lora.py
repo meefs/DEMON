@@ -459,6 +459,67 @@ class LoRAManagerBase(abc.ABC):
         for lid in list(self._loras.keys()):
             self.remove_lora(lid)
 
+    def close(self) -> None:
+        """Drop catalog state and shut down the prewarm executor.
+
+        Called by :meth:`DiffusionEngine.close` on session teardown so the
+        materialized deltas (CPU RAM) and any backend-specific runtime
+        mirrors (GPU, populated by ``_on_enabled``) don't outlive the
+        session that allocated them. The engine refit itself is *not*
+        rolled back here — the engine is being destroyed seconds later
+        and the refit's only effect would be to dirty pages we're about
+        to free.
+
+        Idempotent: subsequent calls are no-ops.
+        """
+        # Drop CPU deltas + per-id mirrors. Subclasses override
+        # ``_on_disabled`` to release backend-specific GPU buffers
+        # (EagerLoRAManager._gpu_deltas), but we mark every entry as
+        # REGISTERED first so that hook fires once per ever-enabled LoRA.
+        for entry in self._loras.values():
+            if entry.state == LoRAState.ENABLED:
+                try:
+                    entry.state = LoRAState.REGISTERED
+                    entry.deltas = None
+                    entry.materialized_bytes = 0
+                    self._on_disabled(entry)
+                except Exception:
+                    pass
+            else:
+                entry.deltas = None
+                entry.materialized_bytes = 0
+        self._loras.clear()
+        # Drop base-weight snapshots (TRT: CPU, Eager: same dtype/device
+        # as live params — GPU on a normal session). Refit buffers
+        # (TRT only) live alongside.
+        try:
+            self._base_weights.clear()
+        except Exception:
+            pass
+        for attr in ("_refit_bufs", "_param_to_trt", "_np_dtype",
+                     "_param_dtype", "_decoder_params", "_gpu_deltas"):
+            d = getattr(self, attr, None)
+            if isinstance(d, dict):
+                d.clear()
+        # Shut down the prewarm thread pool. A worker thread holding a
+        # reference to a partially-materialized entry's deltas would
+        # otherwise keep CPU buffers alive past close().
+        if self._executor is not None:
+            try:
+                self._executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                # Older Python lacks cancel_futures; fall through.
+                self._executor.shutdown(wait=False)
+            self._executor = None
+        # Drop TRT-specific bookkeeping last so the IRefitter's reference
+        # to the engine clears before the engine is destroyed.
+        for attr in ("_refitter", "_engine", "_trt", "_trt_logger"):
+            if hasattr(self, attr):
+                try:
+                    setattr(self, attr, None)
+                except Exception:
+                    pass
+
     # ------------------------------------------------------------------
     # Backward-compat one-shot API
     # ------------------------------------------------------------------

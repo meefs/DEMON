@@ -91,6 +91,43 @@ class ModelContext:
             skip_vae=skip_vae,
         )
 
+    def close(self) -> None:
+        """Release model weights + diffusion engine.
+
+        Called by :meth:`Session.close`. Drops:
+
+        - the DiffusionEngine (TRT engine, exec context, refit buffers,
+          LoRA manager — see :meth:`DiffusionEngine.close`)
+        - the DiT model (~6 GB bf16 turbo on GPU, ~12 GB XL turbo)
+        - the VAE (~0.5 GB GPU when not skipped)
+        - the text encoder (~0.3 GB GPU)
+        - the silence latent (small, but it pins a slice of an old
+          activation arena under torch's caching allocator)
+
+        The caller is expected to follow with ``gc.collect()`` and
+        ``torch.cuda.empty_cache()`` so PyTorch returns the freed
+        allocations to CUDA. TRT contexts, on the other hand, free
+        directly via their finalizers and don't go through torch.
+
+        Idempotent: subsequent calls are no-ops.
+        """
+        if self._diffusion_engine is not None:
+            try:
+                self._diffusion_engine.close()
+            except Exception:
+                pass
+            self._diffusion_engine = None
+        # Drop tensor-bearing attributes. Setting to None is enough — the
+        # nn.Module / tensor objects have no CUDA-side finalizer that
+        # requires explicit destruction the way TRT contexts do, so the
+        # subsequent gc.collect() + empty_cache() drains them.
+        for attr in ("model", "vae", "text_encoder",
+                     "text_tokenizer", "silence_latent", "config"):
+            try:
+                setattr(self, attr, None)
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
     # Initialization
     # ------------------------------------------------------------------

@@ -696,3 +696,30 @@ class StreamHandle:
 
     def stats(self) -> dict:
         return self.stream_node.stats()
+
+    def close(self) -> None:
+        """Release the underlying ``StreamPipeline`` and detach refs.
+
+        After ``close()``, ``tick()`` and ``decode()`` will fail. Callers
+        must not reuse the handle. Idempotent.
+        """
+        node = getattr(self, "stream_node", None)
+        if node is not None:
+            pipeline = getattr(node, "_pipeline", None)
+            if pipeline is not None:
+                try:
+                    pipeline.close()
+                except Exception:
+                    pass
+                node._pipeline = None
+            node._engine = None
+        # Detach top-level refs so the session-level close is the
+        # single ground-truth owner of model/vae handles.
+        self.stream_node = None
+        self.decoder_node = None
+        self.model = None  # type: ignore[assignment]
+        self.vae = None  # type: ignore[assignment]
+        self.source = None  # type: ignore[assignment]
+        self.conditioning = None  # type: ignore[assignment]
+        self.context_latent = None  # type: ignore[assignment]
+        self.base_kwargs = {}

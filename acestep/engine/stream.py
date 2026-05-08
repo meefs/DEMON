@@ -1271,3 +1271,56 @@ class StreamPipeline:
             "is_warmed_up": self.is_warmed_up,
             "backend": "trt" if self._trt_engine is not None else "pytorch",
         }
+
+    def close(self) -> None:
+        """Release per-pipeline GPU buffers + caches.
+
+        Called by :meth:`StreamHandle.close` on session teardown. Drops:
+
+        - The shape-keyed TRT I/O buffers (``_trt_bufs``,
+          ``_trt_out_buf``). On a turbo profile this is ~80 MB but the
+          buffers reference the engine's input bindings; clearing them
+          breaks the cycle that would otherwise pin the engine.
+        - In-flight slot tensors (``_slots``) and the queued requests'
+          backing tensors (``_queue``) — each slot's ``xt`` is a
+          ``[1, T, 64]`` bf16 latent.
+        - The shared noise tensor (``_last_noise``).
+        - The schedule cache, compiled ODE/SDE step graphs, sentinel
+          tensors, channel-gain tensor, and shared-curve dict.
+        - The TRT engine/context refs we captured from ``DiffusionEngine``.
+          The engine itself is owned (and freed) by ``DiffusionEngine.close``;
+          we only drop our copy of the refs so this pipeline doesn't pin
+          the engine after the session is gone.
+
+        Idempotent: subsequent calls are no-ops.
+        """
+        self._slots = []
+        self._queue = []
+        self._last_noise = None
+        self._trt_bufs = None
+        self._trt_out_buf = None
+        self._trt_ctx = None
+        self._trt_engine = None
+        self._trt_stream = None
+        self._channel_gain = None
+        self._ones_3d = None
+        self._zeros_3d = None
+        try:
+            self._schedule_cache.clear()
+        except Exception:
+            pass
+        try:
+            self._compiled_cache.clear()
+        except Exception:
+            pass
+        try:
+            self._shared_curves.clear()
+        except Exception:
+            pass
+        # DCW corrector holds wavelet basis tensors on GPU; drop it.
+        self._dcw_corrector = None
+        # Detach references to the engine + decoder so DiffusionEngine.close
+        # is the sole owner that decides when those objects go.
+        self.engine = None
+        self.decoder = None
+        self.model = None
