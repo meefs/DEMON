@@ -127,7 +127,7 @@ const SPARK_GRAVITY = 0.06; // was 0.10 (cursor 0.16); even flatter for trails a
 const SPARK_RADIUS = 2.5; // bumped from 2 for more visible streaks
 const SPARK_MIN_SPEED = 4.5;
 const SPARK_MAX_SPEED = 8.5;
-const SPARK_LIFE_MS = 1300; // longer so trails reach further into the history
+const SPARK_LIFE_MS = 1800; // longer so trails reach further into the history and bouncy sparks have time to hop down through several lines
 const SPARK_CONE_RAD = Math.PI / 5; // ~36° spread around the leftward axis
 
 // Per-line cascade stagger on chorus moments. When chorus fires, each
@@ -157,9 +157,46 @@ const BASELINE_BURST_SPARKS = 7; // was 4; denser single trail reads more clearl
 // rate-limit), so the kick still reads — it just gets a wandering
 // single-line trail instead of the full-cluster blast.
 const CHORUS_THRESH = 0.5;
-const CHORUS_FIRE_PROB = 0.55;
+// Probability that a strong-kick disarm fires the full multi-line burst
+// (vs. falling through to a single-line baseline trail). Lower means
+// chorus moments stay rarer / more special; higher means more crowded
+// graph during dense passages. Tuned by feel.
+const CHORUS_FIRE_PROB = 0.35;
 const CHORUS_BURST_BASE = 6;
 const CHORUS_BURST_PEAK = 6; // up to +6 more sparks per line scaled by peakPulse
+
+// Bouncy spark trait. Each spawned spark has BOUNCE_PROB chance of
+// being tagged bouncy. Two-phase bounce model:
+//
+//  Phase 1 — own line: the spark bounces TWICE on its spawn line.
+//  Each bounce reflects velocity around the line's local normal at
+//  the bounce point and damps the result by BOUNCE_DAMPING. Inclined
+//  lines kick the spark off at the right angle.
+//
+//  Phase 2 — fall-through: once the spark has used its 2 own-line
+//  bounces, it falls through and lands on each LOWER line below in
+//  turn — exactly one bounce per line, tracked via a bitmask. Reads
+//  as a stone skipping down a flight of stairs.
+//
+// Velocity is queried from the line's CURRENT geometry (not a captured
+// spawn-time y), so a slider movement that re-shapes the line shows
+// up correctly in the bounce direction. Lines with colorIdx >= 32
+// are not tracked in the multi-line phase (would need a wider mask);
+// that case only triggers if a single session uses >32 distinct line
+// names, which the default fixture set doesn't approach.
+const BOUNCE_PROB = 0.4;
+// Initial upward velocity for bouncy sparks. Tuned so the round trip
+// (rise + fall) fits comfortably in SPARK_LIFE_MS — at vy=-1.5 with
+// gravity 0.06, peak is ~19 px above the line and round trip is
+// ~830 ms, leaving ~400 ms after the first bounce for one or two
+// smaller hops before the spark fades out.
+const BOUNCE_INIT_VY = -1.5;
+const BOUNCE_DAMPING = 0.7;
+const BOUNCE_MIN_SPEED = 0.4;
+// Max bounces on a spark's spawn line before it switches to fall-
+// through mode. User-facing tuning knob: 2 reads as "skipping stone
+// hops twice on a stair, then continues down."
+const OWN_LINE_BOUNCE_LIMIT = 2;
 
 // Pool size. Sized so a full chorus burst (~20 lines × up to 12 sparks
 // = 240) plus baseline trails (~7 / 250 ms = ~36 alive over a 1.3 s
@@ -201,6 +238,22 @@ export class GraphRenderer {
   private readonly _spBirth = new Float32Array(MAX_SPARKS);
   private readonly _spColor = new Uint16Array(MAX_SPARKS);
   private readonly _spAlive = new Uint8Array(MAX_SPARKS);
+  // Bouncy flag — when set, the spark participates in the two-phase
+  // bounce model (see BOUNCE_PROB notes). Set probabilistically at
+  // spawn. Cleared when the spark exhausts its bouncing (either it's
+  // hit BOUNCE_MIN_SPEED on rebound, or it's bounced once on every
+  // line in the otherBouncedMask, or — pragmatically — its velocity
+  // has decayed enough that further crossings produce no perceptible
+  // hop).
+  private readonly _spBouncy = new Uint8Array(MAX_SPARKS);
+  // Phase-1 own-line bounce counter. Goes 0 → 1 → 2; at 2 the spark
+  // graduates to phase-2 fall-through mode where bouncedMask governs.
+  private readonly _spOwnBounces = new Uint8Array(MAX_SPARKS);
+  // Phase-2 mask: one bit per colorIdx of "other" lines already
+  // bounced on. Bit set ⇒ pass through next time we cross. Limited
+  // to 32 colors per spark; lines with colorIdx >= 32 always pass
+  // through (acceptable: see BOUNCE_PROB doc).
+  private readonly _spOtherBouncedMask = new Uint32Array(MAX_SPARKS);
   // Hint for the allocator's free-slot search. Always start scanning
   // from here; advance past whatever we hand out. When the pool is
   // mostly empty, this gives O(1) allocation; when full, the scan
@@ -478,15 +531,31 @@ export class GraphRenderer {
               SPARK_MIN_SPEED +
               Math.random() * (SPARK_MAX_SPEED - SPARK_MIN_SPEED);
             const slot = this._allocSpark(now);
+            const bouncy = Math.random() < BOUNCE_PROB ? 1 : 0;
             this._spX[slot] = playheadX;
             this._spY[slot] = sparkY;
             this._spVX[slot] = Math.cos(sa) * sp;
-            this._spVY[slot] = Math.sin(sa) * sp;
+            // Bouncy sparks need a controlled, modest upward velocity
+            // at spawn so the rise + fall round trip fits inside
+            // SPARK_LIFE_MS. Free-running sa would put half of them
+            // moving DOWN at spawn (instant bounce, no visible skip)
+            // and the upward half might fly too high to fall back
+            // within the spark's lifetime. BOUNCE_INIT_VY = -1.5 puts
+            // the peak ~19 px above the line at ~415 ms, the first
+            // bounce ~830 ms in, leaving room for 1–2 smaller hops.
+            this._spVY[slot] = bouncy
+              ? BOUNCE_INIT_VY
+              : Math.sin(sa) * sp;
             this._spAge[slot] = 0;
             this._spLife[slot] = SPARK_LIFE_MS - 150 + Math.random() * 300;
             this._spBirth[slot] = burstBirthAt;
             this._spColor[slot] = colorIdx;
             this._spAlive[slot] = 1;
+            // Bouncy trait — see BOUNCE_PROB for the model. Two-phase
+            // bookkeeping reset to zero so each spawn starts fresh.
+            this._spBouncy[slot] = bouncy;
+            this._spOwnBounces[slot] = 0;
+            this._spOtherBouncedMask[slot] = 0;
           }
         }
       }
@@ -494,9 +563,15 @@ export class GraphRenderer {
       // Sparks — physics + render in a single pool walk. Alpha is
       // applied via globalAlpha (one numeric assignment) instead of a
       // per-spark `rgba(...)` string allocation; fillStyle changes only
-      // when the next alive spark belongs to a different line. fillRect
-      // skips the path tessellation cost of arc(); at 2.5 px in motion
-      // the visual is indistinguishable from circles.
+      // when the next alive spark belongs to a different line. Disc
+      // shape uses arc()+fill() so dots read as round at any size; the
+      // per-spark cost is negligible (~3x of fillRect, still sub-ms for
+      // ~MAX_SPARKS sparks per frame on M-class hardware).
+      const TAU = Math.PI * 2;
+      // Hoisted out of the per-spark loop; reused per crossing scan.
+      const pxPerSampleSpark = w / (VISIBLE_SAMPLES - 1);
+      const yPad2 = h - 2 * Y_PAD;
+      const hMinusYPad = h - Y_PAD;
       let lastColorIdx = -1;
       for (let i = 0; i < MAX_SPARKS; i++) {
         if (!this._spAlive[i]) continue;
@@ -508,10 +583,149 @@ export class GraphRenderer {
           continue;
         }
         this._spAge[i] = age;
-        const newVY = this._spVY[i] + SPARK_GRAVITY * dtScale;
+        let newVX = this._spVX[i];
+        let newVY = this._spVY[i] + SPARK_GRAVITY * dtScale;
+        const prevY = this._spY[i];
+        let x = this._spX[i] + newVX * dtScale;
+        let y = prevY + newVY * dtScale;
+
+        // Two-phase bounce. While newVY > 0 (moving down) and the
+        // spark is bouncy, scan all line histories for the FIRST line
+        // crossing in (prevY, y]. Eligibility:
+        //   - own line and ownBounces < OWN_LINE_BOUNCE_LIMIT, OR
+        //   - other line and ownBounces == OWN_LINE_BOUNCE_LIMIT and
+        //     this color's bit isn't set in otherBouncedMask.
+        // On a successful bounce, reflect (newVX, newVY) around the
+        // local line normal, damp by BOUNCE_DAMPING, clamp y to the
+        // line's y, and update the bookkeeping. Lines further down
+        // the canvas in the same frame are NOT bounced on — after the
+        // reflection vy is upward, so the spark physically moves away
+        // from them this frame.
+        if (this._spBouncy[i] && newVY > 0) {
+          const samplesFromHead = Math.round(
+            (playheadX - x) / pxPerSampleSpark,
+          );
+          if (samplesFromHead >= 0) {
+            const ownColor = this._spColor[i];
+            const ownBounces = this._spOwnBounces[i];
+            const otherMask = this._spOtherBouncedMask[i];
+            let bestColorIdx = -1;
+            let bestLineY = Infinity;
+            let bestSlope = 0;
+
+            for (const [name, hist] of this.histories) {
+              if (samplesFromHead >= hist.filled) continue;
+              const c = this._colorIdxByName.get(name);
+              if (c === undefined) continue;
+
+              const isOwn = c === ownColor;
+              let eligible: boolean;
+              if (isOwn) {
+                eligible = ownBounces < OWN_LINE_BOUNCE_LIMIT;
+              } else if (ownBounces >= OWN_LINE_BOUNCE_LIMIT && c < 32) {
+                eligible = (otherMask & (1 << c)) === 0;
+              } else {
+                eligible = false;
+              }
+              if (!eligible) continue;
+
+              // Line y at the spark's current x.
+              const bufIdx =
+                (hist.head - 1 - samplesFromHead + HISTORY_LEN) % HISTORY_LEN;
+              const v = hist.buf[bufIdx];
+              const lineY = hMinusYPad - v * yPad2;
+              if (lineY <= prevY || lineY > y) continue;
+              if (lineY >= bestLineY) continue;
+
+              // Local slope: central difference between neighboring
+              // samples. dy/dx = (y_next - y_prev) / (x_next - x_prev).
+              // Newer sample = right (smaller samplesFromHead).
+              // Clamp to ends of the buffer so edges don't blow up.
+              const sNewer = Math.max(0, samplesFromHead - 1);
+              const sOlder = Math.min(hist.filled - 1, samplesFromHead + 1);
+              let slope = 0;
+              if (sNewer !== sOlder) {
+                const bufNewer =
+                  (hist.head - 1 - sNewer + HISTORY_LEN) % HISTORY_LEN;
+                const bufOlder =
+                  (hist.head - 1 - sOlder + HISTORY_LEN) % HISTORY_LEN;
+                const yNewer = hMinusYPad - hist.buf[bufNewer] * yPad2;
+                const yOlder = hMinusYPad - hist.buf[bufOlder] * yPad2;
+                // x_newer > x_older (newer sits closer to playhead, larger x).
+                slope = (yNewer - yOlder) / ((sOlder - sNewer) * pxPerSampleSpark);
+              }
+
+              bestColorIdx = c;
+              bestLineY = lineY;
+              bestSlope = slope;
+            }
+
+            if (bestColorIdx >= 0) {
+              // Reflect velocity around line normal. Tangent = (1, slope)
+              // unit-normalised; normal = (-slope, 1) / sqrt(1 + slope²).
+              // Reflected v = v - 2 (v · n) n; energy lost via uniform
+              // damping factor on both components.
+              const slope = bestSlope;
+              const invNormMag = 1 / Math.sqrt(1 + slope * slope);
+              const nx = -slope * invNormMag;
+              const ny = invNormMag;
+              const vDotN = newVX * nx + newVY * ny;
+              newVX = (newVX - 2 * vDotN * nx) * BOUNCE_DAMPING;
+              newVY = (newVY - 2 * vDotN * ny) * BOUNCE_DAMPING;
+              y = bestLineY;
+
+              // If the reflection kicked the spark rightward (toward
+              // the playhead), cap its remaining lifetime so it fades
+              // out before it reaches the playhead-as-wall. Avoids the
+              // visual hiccup where a rightward-moving spark hits the
+              // wall and stops dead. Using 85% of the time-to-impact
+              // as the new lifetime gives the alpha decay enough room
+              // to take the spark to ~zero before the wall would.
+              if (newVX > 0 && x < playheadX) {
+                const framesToWall = (playheadX - x) / newVX;
+                const msToWall = framesToWall * 16; // approximate frame ms
+                const cappedRemaining = msToWall * 0.85;
+                if (cappedRemaining < life - age) {
+                  this._spLife[i] = age + cappedRemaining;
+                }
+              }
+
+              if (bestColorIdx === ownColor) {
+                this._spOwnBounces[i] = ownBounces + 1;
+              } else if (bestColorIdx < 32) {
+                this._spOtherBouncedMask[i] = otherMask | (1 << bestColorIdx);
+              }
+              if (Math.abs(newVY) < BOUNCE_MIN_SPEED) {
+                this._spBouncy[i] = 0;
+              }
+
+              // Dev instrumentation: count bounces under window in
+              // local-test mode so a quick `window.__bounceCount` poll
+              // verifies the bounce path is firing. Cheap (a single
+              // typeof + numeric increment) and never set in prod
+              // since __localTestPlayer is the local-test sentinel.
+              if (
+                typeof window !== "undefined" &&
+                (window as { __localTestPlayer?: unknown })
+                  .__localTestPlayer
+              ) {
+                const w = window as { __bounceCount?: number };
+                w.__bounceCount = (w.__bounceCount ?? 0) + 1;
+              }
+            }
+          }
+        }
+
+        // Playhead clamp — no spark may pass to the right of the
+        // playhead. Treat it as a vertical wall: clamp x and force
+        // vx leftward if the bounce reflection nudged it rightward.
+        if (x > playheadX) {
+          x = playheadX;
+          if (newVX > 0) newVX = -newVX;
+        }
+
+        this._spVX[i] = newVX;
         this._spVY[i] = newVY;
-        const x = this._spX[i] + this._spVX[i] * dtScale;
-        const y = this._spY[i] + newVY * dtScale;
         this._spX[i] = x;
         this._spY[i] = y;
         const f = age / life;
@@ -523,8 +737,9 @@ export class GraphRenderer {
           lastColorIdx = colorIdx;
         }
         ctx.globalAlpha = 1 - f;
-        const d = radius + radius;
-        ctx.fillRect(x - radius, y - radius, d, d);
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, TAU);
+        ctx.fill();
       }
       ctx.globalAlpha = 1;
 
