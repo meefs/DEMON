@@ -277,6 +277,11 @@ interface PerformanceState {
   /** Detected musical metadata from server's "ready" frame. */
   detectedBpm: number | null;
   detectedKey: string | null;
+  /** When non-null, the next swap_ready handler applies this key
+   *  instead of the server-detected one and then clears it. Lets the
+   *  upload dialog's "Set manually" mode survive the swap roundtrip
+   *  without being clobbered by the CNN's result. */
+  pendingKeyOverride: string | null;
   /** Display mode toggle. */
   mode: DisplayMode;
   /** Kiosk mode (auto-hide cursor + idle reset). */
@@ -323,6 +328,11 @@ interface PerformanceState {
   setKey: (k: string) => void;
   setFixture: (name: string) => void;
   setDetected: (bpm: number | null, key: string | null) => void;
+  /** One-shot key override consumed by useFixtureSwap when the next
+   *  swap_ready arrives. Set by the AlmostReadyDialog when the user
+   *  picks "Set manually" before uploading. Cleared after consumption
+   *  so subsequent swaps fall back to server-detected key. */
+  setPendingKeyOverride: (k: string | null) => void;
   setMode: (m: DisplayMode) => void;
   toggleMode: () => void;
   setKiosk: (k: boolean) => void;
@@ -399,6 +409,7 @@ export const usePerformanceStore = create<PerformanceState>((set) => ({
   fixture: "",
   detectedBpm: null,
   detectedKey: null,
+  pendingKeyOverride: null,
   mode: "graph",
   kiosk: false,
   paused: false,
@@ -491,6 +502,7 @@ export const usePerformanceStore = create<PerformanceState>((set) => ({
       // adopt the detection. Caller can re-set if needed.
       activeKey: key ?? s.activeKey,
     })),
+  setPendingKeyOverride: (k) => set({ pendingKeyOverride: k }),
   setMode: (m) => set({ mode: m }),
   toggleMode: () => set((s) => ({ mode: s.mode === "graph" ? "video" : "graph" })),
   setKiosk: (k) => set({ kiosk: k }),

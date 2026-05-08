@@ -61,7 +61,25 @@ export function useFixtureSwap() {
             key?: string;
           }>).detail;
           session.player?.swap(detail.interleaved, detail.channels);
-          if (detail.key) usePerformanceStore.getState().setKey(detail.key);
+          // Always update detectedKey so the advanced strip's
+          // "Detected: …" readout reflects what the CNN actually
+          // inferred — even when the user overrode it below.
+          const perf = usePerformanceStore.getState();
+          if (detail.key) {
+            perf.setDetected(perf.detectedBpm, detail.key);
+          }
+          // One-shot override (set by AlmostReadyDialog's "Set
+          // manually" mode) wins over the server's detection and is
+          // cleared after use. Tell the server too so the model hint
+          // matches what the UI shows.
+          if (perf.pendingKeyOverride) {
+            const override = perf.pendingKeyOverride;
+            perf.setKey(override);
+            perf.setPendingKeyOverride(null);
+            remote.sendPrompt(perf.promptA, override);
+          } else if (detail.key) {
+            perf.setKey(detail.key);
+          }
           resolve(true);
         };
         const onFail = (e: Event) => {

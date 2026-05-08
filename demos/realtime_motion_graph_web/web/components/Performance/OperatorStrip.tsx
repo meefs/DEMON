@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { decodeAudioFile, listFixtures, pickDefaultFixture } from "@/engine/audio/loadFixture";
+import {
+  decodeAudioFile,
+  listFixtures,
+  pickDefaultFixture,
+  type DecodedFixture,
+} from "@/engine/audio/loadFixture";
 import { togglePauseAndAudio } from "@/engine/audio/togglePauseAndAudio";
 import { LOCAL_MODE } from "@/lib/runtime";
 import { useCurveStore } from "@/store/useCurveStore";
@@ -12,6 +17,7 @@ import { usePerformanceStore } from "@/store/usePerformanceStore";
 import { useSessionStore } from "@/store/useSessionStore";
 import { VALID_KEYSCALES } from "@/types/engine";
 
+import { AlmostReadyDialog } from "./AlmostReadyDialog";
 import { MidiBadge } from "./MidiBadge";
 import { RecordToggle } from "./RecordToggle";
 
@@ -38,6 +44,15 @@ export function OperatorStrip() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Mirror of AudioSourceCrate's pending-upload state. The "Almost
+  // Ready" dialog gates the actual fixture swap so the previously
+  // playing track keeps playing if the user cancels.
+  const [pending, setPending] = useState<{
+    decoded: DecodedFixture;
+    fileName: string;
+    wasTrimmed: boolean;
+    originalFile: File;
+  } | null>(null);
 
   // The bottom-left <AudioSourceCrate /> is the primary track-picker; we
   // keep this dropdown + upload icon here as the power-user fallback that
@@ -65,7 +80,7 @@ export function OperatorStrip() {
     setUploading(true);
     setStatus(useSessionStore.getState().status, `Loading ${file.name}…`);
     try {
-      const decoded = await decodeAudioFile(file);
+      const { decoded, wasTrimmed } = await decodeAudioFile(file);
       // De-collide names: appending an index when the same filename is
       // uploaded twice keeps prior uploads selectable while letting the
       // new one win the dropdown. The decoded buffer is what the pod
@@ -76,8 +91,9 @@ export function OperatorStrip() {
       while (useCustomTracksStore.getState().has(chosen)) {
         chosen = `${baseName} (${i++})`;
       }
-      addCustomTrack(chosen, decoded);
-      setFixture(chosen);
+      // Defer addCustomTrack + setFixture to commitPending so cancelling
+      // leaves the previously playing track intact.
+      setPending({ decoded, fileName: chosen, wasTrimmed, originalFile: file });
       setStatus(useSessionStore.getState().status, "");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -85,6 +101,19 @@ export function OperatorStrip() {
     } finally {
       setUploading(false);
     }
+  }
+
+  function commitPending(keyOverride: string | null) {
+    if (!pending) return;
+    const { decoded, fileName, originalFile } = pending;
+    addCustomTrack(fileName, decoded, originalFile);
+    if (keyOverride) {
+      const perf = usePerformanceStore.getState();
+      perf.setPendingKeyOverride(keyOverride);
+      perf.setKey(keyOverride);
+    }
+    setFixture(fileName);
+    setPending(null);
   }
 
   // The pod's WS URL is allocated by the queue and not user-editable.
@@ -161,6 +190,23 @@ export function OperatorStrip() {
         value={activeKey}
         onChange={(e) => {
           const newKey = e.target.value;
+          if (newKey === activeKey) return;
+          // Surface what this control actually does. Users were reading
+          // it as a song-pitch transposer (which it isn't) — the
+          // confirm is a one-off "are you sure" with the explanation
+          // attached, so the action stays one click away but the
+          // misconception gets corrected before the change applies.
+          const ok =
+            typeof window === "undefined" ||
+            window.confirm(
+              `Change key to "${newKey}"?\n\nThis tells the model what key the song is in. It does NOT change the song's pitch or transpose the audio.`,
+            );
+          if (!ok) {
+            // Bounce the <select> back to the previous value so the UI
+            // reflects the cancelled state.
+            e.currentTarget.value = activeKey;
+            return;
+          }
           setKey(newKey);
           const remote = useSessionStore.getState().remote;
           if (remote) {
@@ -256,6 +302,20 @@ export function OperatorStrip() {
       >
         {paused ? "▶" : "⏸"}
       </button>
+
+      {pending && (
+        <AlmostReadyDialog
+          fileName={pending.fileName}
+          wasTrimmed={pending.wasTrimmed}
+          defaultKey={activeKey}
+          onContinue={({ keyOverride }) => commitPending(keyOverride)}
+          onPickAnother={() => {
+            setPending(null);
+            setTimeout(() => fileInputRef.current?.click(), 0);
+          }}
+          onClose={() => setPending(null)}
+        />
+      )}
     </div>
   );
 }

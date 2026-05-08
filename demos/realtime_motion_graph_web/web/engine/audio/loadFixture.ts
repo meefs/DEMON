@@ -120,25 +120,48 @@ export async function loadFixtureAudio(name: string): Promise<DecodedFixture> {
 // would fail server-side at session init regardless of WS frame size.
 // The server's websockets.serve(max_size=...) is sized to fit this
 // duration with a comfortable margin.
-const MAX_FIXTURE_DURATION_S = 240;
+export const MAX_FIXTURE_DURATION_S = 240;
 
-function ensureFitsSwapLimit(decoded: DecodedFixture): void {
+export interface DecodeFileResult {
+  decoded: DecodedFixture;
+  /** True iff the input was longer than MAX_FIXTURE_DURATION_S and we
+   *  trimmed the head. The UI surfaces this so users know the upload
+   *  was clipped. */
+  wasTrimmed: boolean;
+}
+
+/** Soft-trim to fit DEMON's swap-source limit. Tracks ≤ 240 s pass
+ *  through unchanged; longer tracks are clipped to the largest
+ *  pool-aligned length ≤ 240 s. Pool alignment matches the rule in
+ *  decodeArrayBuffer (multiple of SAMPLE_POOL = 9600), so the trimmed
+ *  buffer still satisfies backend.py's VAE-encode constraint. */
+function trimToSwapLimit(decoded: DecodedFixture): DecodeFileResult {
   const seconds = decoded.frames / decoded.sampleRate;
-  if (seconds <= MAX_FIXTURE_DURATION_S) return;
-  throw new Error(
-    `Track too long — ${Math.round(seconds)}s (max ${MAX_FIXTURE_DURATION_S}s). Trim it.`,
-  );
+  if (seconds <= MAX_FIXTURE_DURATION_S) return { decoded, wasTrimmed: false };
+
+  const maxFramesRaw = MAX_FIXTURE_DURATION_S * decoded.sampleRate;
+  const targetFrames = Math.floor(maxFramesRaw / SAMPLE_POOL) * SAMPLE_POOL;
+  const trimmed = new Float32Array(targetFrames * decoded.channels);
+  trimmed.set(decoded.interleaved.subarray(0, targetFrames * decoded.channels));
+  return {
+    decoded: {
+      interleaved: trimmed,
+      channels: decoded.channels,
+      frames: targetFrames,
+      sampleRate: decoded.sampleRate,
+    },
+    wasTrimmed: true,
+  };
 }
 
 /** Decode a user-supplied audio File (mp3, wav, flac, ogg — anything the
- *  browser supports). Used by the OperatorStrip upload affordance.
- *  Throws if the decoded PCM would exceed DEMON's WS frame cap (~50 MiB,
- *  ≈ 130 s at 48 kHz stereo). */
-export async function decodeAudioFile(file: File): Promise<DecodedFixture> {
+ *  browser supports). Used by the upload affordances.
+ *  Auto-trims to MAX_FIXTURE_DURATION_S when the source is longer; the UI
+ *  shows a "we trimmed your upload" message when wasTrimmed is true. */
+export async function decodeAudioFile(file: File): Promise<DecodeFileResult> {
   const bytes = await file.arrayBuffer();
   const decoded = await decodeArrayBuffer(bytes);
-  ensureFitsSwapLimit(decoded);
-  return decoded;
+  return trimToSwapLimit(decoded);
 }
 
 /** Fetch the pod's whitelist of fixture names. */

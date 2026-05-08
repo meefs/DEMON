@@ -2,11 +2,18 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { decodeAudioFile, listFixtures, pickDefaultFixture } from "@/engine/audio/loadFixture";
+import {
+  decodeAudioFile,
+  listFixtures,
+  pickDefaultFixture,
+  type DecodedFixture,
+} from "@/engine/audio/loadFixture";
 import { LOCAL_MODE } from "@/lib/runtime";
 import { useCustomTracksStore } from "@/store/useCustomTracksStore";
 import { usePerformanceStore } from "@/store/usePerformanceStore";
 import { useSessionStore } from "@/store/useSessionStore";
+
+import { AlmostReadyDialog } from "./AlmostReadyDialog";
 
 // Bottom-left counterpart to the bottom-right turntable. Replaces the plain
 // fixture <select> as the primary track-picker — that dropdown hid the fact
@@ -56,6 +63,15 @@ export function AudioSourceCrate() {
 
   const [open, setOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // After decode, the dialog gates the actual fixture swap so the user
+  // can confirm the trim (if any) and pick a key before playback
+  // crossfades.
+  const [pending, setPending] = useState<{
+    decoded: DecodedFixture;
+    fileName: string;
+    wasTrimmed: boolean;
+    originalFile: File;
+  } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const placardRef = useRef<HTMLButtonElement | null>(null);
@@ -102,18 +118,18 @@ export function AudioSourceCrate() {
     setUploading(true);
     setStatus(useSessionStore.getState().status, `Loading ${file.name}…`);
     try {
-      const decoded = await decodeAudioFile(file);
+      const { decoded, wasTrimmed } = await decodeAudioFile(file);
       const baseName = file.name;
       let chosen = baseName;
       let i = 1;
       while (useCustomTracksStore.getState().has(chosen)) {
         chosen = `${baseName} (${i++})`;
       }
-      // Pass the original File so consumers that need the encoded bytes
-      // later (e.g. saved-sessions persistence in the parent webapp) can
-      // recover them without re-prompting the user.
-      addCustomTrack(chosen, decoded, file);
-      setFixture(chosen);
+      // Hand the decoded buffer + trim flag to the dialog. We DON'T add
+      // it to the custom-tracks store yet, and we DON'T setFixture()
+      // yet — that all happens on Continue so the previously playing
+      // song keeps playing if the user cancels.
+      setPending({ decoded, fileName: chosen, wasTrimmed, originalFile: file });
       setStatus(useSessionStore.getState().status, "");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -121,6 +137,22 @@ export function AudioSourceCrate() {
     } finally {
       setUploading(false);
     }
+  }
+
+  function commitPending(keyOverride: string | null) {
+    if (!pending) return;
+    const { decoded, fileName, originalFile } = pending;
+    addCustomTrack(fileName, decoded, originalFile);
+    if (keyOverride) {
+      const perf = usePerformanceStore.getState();
+      perf.setPendingKeyOverride(keyOverride);
+      // Pre-set activeKey so the swap_source send carries the override
+      // as the model hint — useFixtureSwap reads activeKey when calling
+      // remote.sendSwapSource().
+      perf.setKey(keyOverride);
+    }
+    setFixture(fileName);
+    setPending(null);
   }
 
   if (kiosk) return null;
@@ -226,6 +258,22 @@ export function AudioSourceCrate() {
           if (file) void onFilePicked(file);
         }}
       />
+
+      {pending && (
+        <AlmostReadyDialog
+          fileName={pending.fileName}
+          wasTrimmed={pending.wasTrimmed}
+          defaultKey={usePerformanceStore.getState().activeKey}
+          onContinue={({ keyOverride }) => commitPending(keyOverride)}
+          onPickAnother={() => {
+            setPending(null);
+            // Re-open the picker on the next tick so the file input
+            // change handler isn't racing the close.
+            setTimeout(() => fileInputRef.current?.click(), 0);
+          }}
+          onClose={() => setPending(null)}
+        />
+      )}
     </>
   );
 }
