@@ -665,13 +665,27 @@ export class GraphRenderer {
               // unit-normalised; normal = (-slope, 1) / sqrt(1 + slope²).
               // Reflected v = v - 2 (v · n) n; energy lost via uniform
               // damping factor on both components.
+              //
+              // Constraint on top of the physics: sparks always trail
+              // leftward (into the past, away from the playhead). A
+              // physically-correct reflection on a steep down-right
+              // slope would kick the spark rightward — true to physics
+              // but visually wrong here, since the right side of the
+              // playhead is "future" the engine hasn't generated yet.
+              // We mirror any rightward reflection back to leftward,
+              // preserving the slope-driven vy magnitude but keeping
+              // the timeline metaphor intact. Same shape of fix as
+              // the playhead clamp below; it's the velocity-side twin.
               const slope = bestSlope;
               const invNormMag = 1 / Math.sqrt(1 + slope * slope);
               const nx = -slope * invNormMag;
               const ny = invNormMag;
               const vDotN = newVX * nx + newVY * ny;
-              newVX = (newVX - 2 * vDotN * nx) * BOUNCE_DAMPING;
-              newVY = (newVY - 2 * vDotN * ny) * BOUNCE_DAMPING;
+              let rVX = newVX - 2 * vDotN * nx;
+              const rVY = newVY - 2 * vDotN * ny;
+              if (rVX > 0) rVX = -rVX;
+              newVX = rVX * BOUNCE_DAMPING;
+              newVY = rVY * BOUNCE_DAMPING;
               y = bestLineY;
 
               if (bestColorIdx === ownColor) {
