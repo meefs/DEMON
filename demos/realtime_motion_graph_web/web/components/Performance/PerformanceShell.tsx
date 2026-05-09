@@ -27,6 +27,7 @@ import { useSessionStore } from "@/store/useSessionStore";
 import { AdvancedDrawer } from "./AdvancedDrawer";
 import { AudioSourceCrate } from "./AudioSourceCrate";
 import { ConfigModal } from "./ConfigModal";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { DesktopEdgeDrag } from "./DesktopEdgeDrag";
 import { HUDFrame } from "./HUDFrame";
 import { InstallStage } from "./InstallStage";
@@ -95,6 +96,7 @@ export function PerformanceShell() {
   const started = status !== "idle";
 
   return (
+    <>
     <div id="performance" className="screen">
       {status === "ready" && <AudioSourceCrate />}
       <RecordButton />
@@ -133,6 +135,7 @@ export function PerformanceShell() {
 
       <AdvancedDrawer />
       <ConfigModal />
+      <ConfirmDialog />
 
       <StatusBar />
 
@@ -142,11 +145,18 @@ export function PerformanceShell() {
 
       <RecordingPreview />
 
-      <CustomCursor />
-
       {/* Phone-only portrait gate. CSS-driven; renders behind the rest of
           the UI and only paints in (max-width: 768px) AND portrait. */}
       <PortraitLockOverlay />
     </div>
+    {/* CustomCursor sits OUTSIDE #performance on purpose. #performance
+        has `isolation: isolate`, so any descendant's z-index is scoped
+        to that stacking context — modals are portaled to document.body
+        and render in the root stacking context above all of #performance.
+        Mounting the cursor canvas at the root puts its z-index (111) in
+        the same stacking context as those modals so it draws on top of
+        them. */}
+    <CustomCursor />
+    </>
   );
 }

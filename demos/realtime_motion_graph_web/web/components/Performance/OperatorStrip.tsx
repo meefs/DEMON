@@ -10,6 +10,7 @@ import {
 } from "@/engine/audio/loadFixture";
 import { togglePauseAndAudio } from "@/engine/audio/togglePauseAndAudio";
 import { LOCAL_MODE } from "@/lib/runtime";
+import { confirm } from "@/store/useConfirmStore";
 import { useCurveStore } from "@/store/useCurveStore";
 import { useCustomTracksStore } from "@/store/useCustomTracksStore";
 import { useLoraStore } from "@/store/useLoraStore";
@@ -203,23 +204,28 @@ export function OperatorStrip() {
         className="fixture-select"
         title="Musical key — sidecar / auto-detected; changes apply immediately"
         value={activeKey}
-        onChange={(e) => {
+        onChange={async (e) => {
           const newKey = e.target.value;
           if (newKey === activeKey) return;
+          // Capture the element synchronously: after the await the
+          // SyntheticEvent's currentTarget may be cleared.
+          const select = e.currentTarget;
           // Surface what this control actually does. Users were reading
           // it as a song-pitch transposer (which it isn't) — the
           // confirm is a one-off "are you sure" with the explanation
           // attached, so the action stays one click away but the
           // misconception gets corrected before the change applies.
-          const ok =
-            typeof window === "undefined" ||
-            window.confirm(
-              `Change key to "${newKey}"?\n\nThis tells the model what key the song is in. It does NOT change the song's pitch or transpose the audio.`,
-            );
+          const ok = await confirm({
+            title: "Change key",
+            message: `Change key to "${newKey}"?\n\nThis tells the model what key the song is in. It does NOT change the song's pitch or transpose the audio.`,
+            confirmLabel: "Change key",
+          });
           if (!ok) {
             // Bounce the <select> back to the previous value so the UI
-            // reflects the cancelled state.
-            e.currentTarget.value = activeKey;
+            // reflects the cancelled state. Direct DOM write because
+            // the controlled `value` prop didn't change, so React
+            // won't re-sync on its own.
+            select.value = activeKey;
             return;
           }
           setKey(newKey);
@@ -241,20 +247,21 @@ export function OperatorStrip() {
         className="fixture-select"
         title="Time signature — sidecar / default; tells the model the song's meter (does not change tempo or beat grid)"
         value={activeTimeSignature}
-        onChange={(e) => {
+        onChange={async (e) => {
           const newTs = e.target.value;
           if (!isTimeSignature(newTs) || newTs === activeTimeSignature) return;
+          const select = e.currentTarget;
           // Same confirm-on-change UX as the key dropdown: meter is a
           // model hint, not a tempo/beat-grid edit. The wording mirrors
           // the keyscale confirm exactly so operators read both
           // controls the same way.
-          const ok =
-            typeof window === "undefined" ||
-            window.confirm(
-              `Change time signature to "${TIME_SIGNATURE_LABELS[newTs]}"?\n\nThis tells the model the song's meter. It does NOT change the song's tempo or beat grid.`,
-            );
+          const ok = await confirm({
+            title: "Change time signature",
+            message: `Change time signature to "${TIME_SIGNATURE_LABELS[newTs]}"?\n\nThis tells the model the song's meter. It does NOT change the song's tempo or beat grid.`,
+            confirmLabel: "Change time signature",
+          });
           if (!ok) {
-            e.currentTarget.value = activeTimeSignature;
+            select.value = activeTimeSignature;
             return;
           }
           setTimeSignature(newTs);
@@ -332,9 +339,14 @@ export function OperatorStrip() {
         type="button"
         className="pause-btn"
         title="Reset all sliders + LoRAs to defaults. Does NOT touch MIDI mapping, automation curves, or persisted UI prefs."
-        onClick={() => {
-          if (typeof window === "undefined") return;
-          if (!window.confirm("Reset sliders and LoRAs to defaults?")) return;
+        onClick={async () => {
+          const ok = await confirm({
+            title: "Reset",
+            message: "Reset sliders and LoRAs to defaults?",
+            confirmLabel: "Reset",
+            variant: "danger",
+          });
+          if (!ok) return;
           usePerformanceStore.getState().resetToDefaults();
           useLoraStore.getState().reset();
         }}

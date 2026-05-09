@@ -163,9 +163,12 @@ body.cursor-hidden nextjs-portal * {
   width: 100vw;
   height: 100vh;
   pointer-events: none;
-  /* Above any full-screen overlay (QueueScene, PaywallSignedIn at z 100)
-     so the orbit + confetti remain visible while those scenes are up. */
-  z-index: 111;
+  /* Sits above the modal stack (config-modal z=100, almost-ready /
+     confirm-dialog z=110) so the orbital cluster + sparks paint on top
+     of any open dialog. CustomCursor is mounted outside #performance
+     (which has `isolation: isolate`) so this z-index lives in the root
+     stacking context, not scoped to the performance subtree. */
+  z-index: 150;
   opacity: 1;
   transition: opacity 280ms cubic-bezier(.2, .8, .2, 1);
   /* Force a dedicated GPU compositor layer so unrelated repaints (overlays
@@ -4615,6 +4618,110 @@ body[data-mode="graph"] #install-video-area .focal-side-blur { display: none; }
   color: var(--text-dim);
 }
 .almost-ready-btn--secondary:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   ConfirmDialog — generic yes/no replacement for window.confirm().
+   Mirrors .almost-ready-* sizing/animations but narrower (≈380px)
+   since the body is just a message + two buttons. z-index 110 puts it
+   in the same band as .almost-ready-backdrop; .cursor-canvas (z=150,
+   root stacking context) paints over the top.
+   ───────────────────────────────────────────────────────────────────── */
+.confirm-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  background: var(--overlay-bg);
+  -webkit-backdrop-filter: blur(4px);
+          backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: config-fade-in 180ms ease-out;
+}
+.confirm-dialog-modal {
+  position: relative;
+  width: min(380px, 100%);
+  max-height: min(80vh, 480px);
+  background: var(--sheet-bg);
+  border: 1px solid var(--frame-line);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: config-pop-in 220ms cubic-bezier(.2, .8, .2, 1);
+}
+.confirm-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px 6px;
+}
+.confirm-dialog-title {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-strong);
+  font-weight: 500;
+  margin: 0;
+}
+.confirm-dialog-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 18px 14px;
+  font-family: var(--font-mono);
+  font-size: 0.78em;
+  color: var(--text);
+}
+.confirm-dialog-message {
+  margin: 0;
+  /* Preserve \n in plain-string messages so paragraph breaks survive
+     the move from window.confirm. */
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+.confirm-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--frame-line);
+}
+.confirm-dialog-btn {
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms, filter 120ms;
+}
+.confirm-dialog-btn--primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #000;
+  font-weight: 500;
+}
+.confirm-dialog-btn--primary:hover { filter: brightness(1.1); }
+.confirm-dialog-btn--danger {
+  border: 1px solid #d04848;
+  background: #d04848;
+  color: #000;
+  font-weight: 500;
+}
+.confirm-dialog-btn--danger:hover { filter: brightness(1.1); }
+.confirm-dialog-btn--secondary {
+  border: 1px solid var(--frame-line);
+  background: transparent;
+  color: var(--text-dim);
+}
+.confirm-dialog-btn--secondary:hover {
   color: var(--text);
   border-color: var(--text-dim);
 }
