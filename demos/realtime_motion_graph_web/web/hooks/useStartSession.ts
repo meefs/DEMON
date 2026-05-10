@@ -214,18 +214,7 @@ export function useStartSession() {
       useLoraStore.getState().setCatalog(remote.loraCatalog);
     }
 
-    // "Hear the source first" gate: every fresh session starts with the
-    // engine value at 0 so the user hears the unmodified track from
-    // frame 1. The top-edge ribbon then plays a *visual-only* glide
-    // from its prior position down to 0 — purely a hint that the
-    // ribbon is a slider; the engine value never moves with it. The
-    // "drag to start" affordance prompts them to dial it back up; the
-    // first value-changing drag flips remixStarted true.
-    const perfState = usePerformanceStore.getState();
-    const prevDenoise = perfState.sliderTargets["denoise"] ?? 0;
-    perfState.setSliderDirect("denoise", 0);
-    perfState.animateSliderDisplayFrom("denoise", prevDenoise, 700);
-    perfState.setRemixStarted(false);
+    usePerformanceStore.getState().setRemixStarted(false);
 
     setSession(remote, player);
     setStatus("ready", "Playing");

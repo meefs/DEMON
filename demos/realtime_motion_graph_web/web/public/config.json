@@ -26,7 +26,7 @@
   },
 
   "controls": {
-    "denoise": 0.7,
+    "denoise": 0,
     "_lora_default_strength_help": "Initial value applied to any LoRA strength slider whose server-reported strength is 0 (current Python backend behavior). Auto-enabled LoRAs land here on first paint.",
     "lora_default_strength": 0.7,
     "hint_strength": 1.4,
