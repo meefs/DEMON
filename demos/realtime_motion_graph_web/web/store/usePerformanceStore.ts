@@ -20,7 +20,6 @@ import {
 const SHOW_KBD_HINTS_STORAGE_KEY = "demon:showKbdHints";
 const SMOOTH_STORAGE_KEY = "demon:smooth";
 const SMOOTH_MS_STORAGE_KEY = "demon:smoothMs";
-
 const DEFAULT_SMOOTH_MS = 1000;
 const MIN_SMOOTH_MS = 50;
 const MAX_SMOOTH_MS = 10000;
@@ -338,6 +337,13 @@ interface PerformanceState {
    *  smooth). Persisted to localStorage. */
   smooth: boolean;
   smoothMs: number;
+  /** Loudness matching. When on, the AudioPlayer continuously meters
+   *  short-term LUFS, tracks the running max, and boosts quieter
+   *  passages to match the loudest seen (peak-clamped). Initial state
+   *  comes from config.json → audio.lufs_enabled (applied at boot).
+   *  In-session toggles via the LUFS button are not persisted; next
+   *  reload returns to the config value. */
+  lufsOn: boolean;
 
   // ── actions ───────────────────────────────────────────────────────────
   setSlider: (param: string, value: number) => void;
@@ -403,6 +409,7 @@ interface PerformanceState {
   toggleKbdHints: () => void;
   toggleSmooth: () => void;
   setSmoothMs: (ms: number) => void;
+  toggleLufs: () => void;
   /** Read localStorage-backed prefs (showKbdHints) and
    *  apply them to the store. Called from a client-only useEffect so SSR
    *  always renders with the defaults — without this, hydration mismatches
@@ -471,6 +478,7 @@ export const usePerformanceStore = create<PerformanceState>((set) => ({
   showKbdHints: true,
   smooth: false,
   smoothMs: DEFAULT_SMOOTH_MS,
+  lufsOn: false,
 
   setSlider: (param, value) => {
     stampManualTouch(param);
@@ -622,6 +630,8 @@ export const usePerformanceStore = create<PerformanceState>((set) => ({
       saveNum(SMOOTH_MS_STORAGE_KEY, clamped);
       return { smoothMs: clamped };
     }),
+  toggleLufs: () =>
+    set((s) => ({ lufsOn: !s.lufsOn })),
   hydratePersistedPrefs: () =>
     set({
       showKbdHints: loadBool(SHOW_KBD_HINTS_STORAGE_KEY, true),

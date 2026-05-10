@@ -3,8 +3,43 @@
 // (non-secure contexts like plain HTTP to a remote IP).
 
 import { SAMPLE_RATE } from "@/engine/protocol";
+import { getConfig } from "@/lib/config";
+
+import {
+  lufsMakeupGain,
+  measureBlock,
+  measureLoudness,
+  type LoudnessMetric,
+} from "./lufs";
 
 type MirrorListener = () => void;
+
+// –1 dBTP ceiling, expressed as linear amplitude (10 ** (-1/20)).
+const LUFS_PEAK_CEILING = 0.891;
+// Headroom multiplier applied to the source's true peak when adapting
+// the matcher's ceiling. 4x = +12 dB above source peak, enough to
+// fully boost most quieter denoised content into source-loudness
+// parity without clipping the gain-modulated output further than the
+// source already does. Operator can override via audio.lufs_peak_headroom.
+const LUFS_PEAK_HEADROOM_DEFAULT = 4.0;
+// Smoothing time constant for gain ramps. Long enough to avoid audible
+// clicks when the meter sees a sudden energy drop, short enough that
+// the user hears the makeup within ~250 ms.
+const LUFS_GAIN_RAMP_TC = 0.08;
+// Default sliding window for the meter (BS.1770 short-term). Kept
+// for the source-target measurement at init/swap; the live meter
+// loop now reads a per-chunk loudness map instead of a sliding
+// window so it can react to denoised slices the instant the
+// playhead enters them.
+const LUFS_METER_WINDOW_DEFAULT_SEC = 3.0;
+const LUFS_METER_WINDOW_MIN_SEC = 0.5;
+const LUFS_METER_INTERVAL_MS = 100;
+// Frame size for the per-chunk loudness map. 0.3 s at 48 kHz matches
+// the streaming pipeline's slice size, so each engine-written slice
+// updates exactly one or two map entries. Smaller chunks would give
+// tighter time resolution but K/A-weighting filter transients would
+// dominate the per-chunk reading.
+const LUFS_CHUNK_FRAMES = 14400;
 
 interface AudioWorkletNodeWithPort extends AudioNode {
   port: MessagePort;
@@ -31,6 +66,44 @@ export class AudioPlayer {
   private _spBuffer: Float32Array | null = null;
   private _spPosition = 0;
   private _recordDest: MediaStreamAudioDestinationNode | null = null;
+
+  // Loudness matching: a GainNode sits between the worklet and
+  // destination. We measure the source's integrated loudness once at
+  // init() / swap() and lock it as the target. The meter periodically
+  // measures the playhead window; if that window is quieter than the
+  // source target, we boost it up. We never attenuate. So source
+  // plays at unity (it already is the target) and any quieter
+  // remix-output at the playhead gets boosted up to source loudness.
+  //
+  // No running-max, no high-water bookkeeping: the source is the
+  // reference, full stop. If the operator's remix happens to be
+  // louder than source, "louder side wins" via the never-attenuate
+  // clamp -- it plays at unity, source plays at unity, and the
+  // matcher does nothing. That's the intended behaviour.
+  private _makeupGain: GainNode | null = null;
+  private _lufsEnabled = false;
+  private _sourceTarget: number | null = null;
+  private _meterIntervalId: number | null = null;
+  private _meterWindowSec = LUFS_METER_WINDOW_DEFAULT_SEC;
+  private _loudnessMetric: LoudnessMetric = "lufs";
+  // Effective peak ceiling for the makeup gain. Default is -1 dBTP
+  // (0.891), expanded at init/swap to max(default, source_peak *
+  // headroom_factor) so a source with hot peaks doesn't pin the
+  // never-attenuate clamp at unity for the entire session.
+  private _peakCeiling = LUFS_PEAK_CEILING;
+  // Per-chunk loudness/peak map of the mirror. The matcher consults
+  // these arrays at meter time to know "what's at the playhead right
+  // now" without waiting for a sliding window to fill -- which means
+  // gain updates the instant the playhead enters a freshly-written
+  // denoised chunk, instead of swelling up over the window length.
+  // Both arrays are length ceil(totalFrames / LUFS_CHUNK_FRAMES) and
+  // are populated at init/swap and refreshed on every patch/addDelta.
+  private _chunkLoudness: Float32Array | null = null;
+  private _chunkPeak: Float32Array | null = null;
+  /** Most recent short-term loudness reading at the playhead (or null
+   *  when the window had nothing audible). Units depend on the active
+   *  metric (LUFS or dBA). Exposed for UI readouts. */
+  lufsMeasured: number | null = null;
 
   get duration(): number {
     return this.frameCount / SAMPLE_RATE;
@@ -94,12 +167,19 @@ export class AudioPlayer {
       sp.onaudioprocess = (e: AudioProcessingEvent) => this._spProcess(e);
     }
 
-    this.node.connect(this.ctx.destination);
+    this._makeupGain = this.ctx.createGain();
+    this._makeupGain.gain.value = 1.0;
+    this.node.connect(this._makeupGain);
+    this._makeupGain.connect(this.ctx.destination);
+
+    this._measureSourceTarget();
+    if (this._lufsEnabled) this._startMetering();
   }
 
   /** Overwrite a region of the worklet's buffer. */
   patch(startFrame: number, audioInterleaved: Float32Array): void {
     this._writeMirror(startFrame, audioInterleaved, false);
+    this._refreshChunks(startFrame, audioInterleaved.length / this.channels);
     if (this._useWorklet && this.node) {
       const send = audioInterleaved.slice();
       (this.node as AudioWorkletNode).port.postMessage(
@@ -132,11 +212,16 @@ export class AudioPlayer {
       this._spBuffer = interleavedBuffer.slice();
       this._spPosition = 0;
     }
+    // Track changed: re-measure source loudness for the new buffer.
+    this._sourceTarget = null;
+    this.lufsMeasured = null;
+    this._measureSourceTarget();
   }
 
   /** Delta-add into a region of the worklet's buffer. */
   addDelta(startFrame: number, deltaInterleaved: Float32Array): void {
     this._writeMirror(startFrame, deltaInterleaved, true);
+    this._refreshChunks(startFrame, deltaInterleaved.length / this.channels);
     if (this._useWorklet && this.node) {
       const send = deltaInterleaved.slice();
       (this.node as AudioWorkletNode).port.postMessage(
@@ -173,12 +258,39 @@ export class AudioPlayer {
     if (!this.ctx || !this.node) return null;
     if (!this._recordDest) {
       this._recordDest = this.ctx.createMediaStreamDestination();
-      this.node.connect(this._recordDest);
+      // Tap from the makeup-gain output (when present) so recordings
+      // reflect what the user hears with LUFS normalization applied.
+      // Falls back to the raw node if init somehow ran without creating
+      // the gain (defensive — current init() always does).
+      const tap = this._makeupGain ?? this.node;
+      tap.connect(this._recordDest);
     }
     return this._recordDest.stream;
   }
 
+  /**
+   * Toggle loudness matching. When enabled, a periodic meter tracks
+   * the running-max short-term LUFS and ramps the makeup gain so
+   * quieter passages match the loudest seen (peak-clamped at –1 dBTP).
+   * When disabled, the meter stops, the high-water mark resets, and
+   * the gain ramps back to 1.0 (mathematically transparent).
+   */
+  setLufs(enabled: boolean): void {
+    this._lufsEnabled = enabled;
+    if (!this._makeupGain || !this.ctx) return;
+    if (enabled) {
+      this._startMetering();
+    } else {
+      this._stopMetering();
+      this.lufsMeasured = null;
+      const t = this.ctx.currentTime;
+      this._makeupGain.gain.cancelScheduledValues(t);
+      this._makeupGain.gain.setTargetAtTime(1.0, t, LUFS_GAIN_RAMP_TC);
+    }
+  }
+
   async close(): Promise<void> {
+    this._stopMetering();
     try {
       this.node?.disconnect();
     } catch {}
@@ -189,6 +301,178 @@ export class AudioPlayer {
   }
 
   // ── internals ────────────────────────────────────────────────────────
+
+  private _startMetering(): void {
+    if (this._meterIntervalId !== null) return;
+    // Snapshot the window length and metric at meter-start so a
+    // config reload mid-session can't cause a discontinuity.
+    const audioCfg = getConfig().audio;
+    const cfgWin = audioCfg.lufs_window_sec;
+    this._meterWindowSec = Math.max(
+      LUFS_METER_WINDOW_MIN_SEC,
+      Number.isFinite(cfgWin) ? cfgWin : LUFS_METER_WINDOW_DEFAULT_SEC,
+    );
+    this._loudnessMetric =
+      audioCfg.lufs_metric === "dba" ? "dba" : "lufs";
+    this._meterIntervalId = window.setInterval(
+      () => this._meterTick(),
+      LUFS_METER_INTERVAL_MS,
+    );
+  }
+
+  private _stopMetering(): void {
+    if (this._meterIntervalId === null) return;
+    window.clearInterval(this._meterIntervalId);
+    this._meterIntervalId = null;
+  }
+
+  /**
+   * One-shot pass over the source buffer at init() / swap() that
+   * captures the two numbers the matcher needs:
+   *   1. integrated source loudness  -> _sourceTarget (the boost target)
+   *   2. true sample peak            -> drives _peakCeiling
+   *
+   * Both are stable across the session; the meter loop reads them
+   * but never modifies them. Reset and re-measured on swap().
+   *
+   * Runs synchronously on the main thread (~50-200 ms for a 60 s
+   * 48 kHz buffer). Move to a worker if buffer sizes grow into the
+   * multi-minute range.
+   */
+  private _measureSourceTarget(): void {
+    if (!this._mirror) return;
+    const audioCfg = getConfig().audio;
+    const metric: LoudnessMetric =
+      audioCfg.lufs_metric === "dba" ? "dba" : "lufs";
+    // Snap the metric on init/swap so chunk-map readings stay in
+    // the same units as _sourceTarget for the rest of the session.
+    this._loudnessMetric = metric;
+
+    const { value, peak } = measureLoudness(
+      this._mirror,
+      this.channels,
+      SAMPLE_RATE,
+      metric,
+    );
+    this._sourceTarget = value;
+
+    const headroomFactor = Number.isFinite(audioCfg.lufs_peak_headroom)
+      ? audioCfg.lufs_peak_headroom
+      : LUFS_PEAK_HEADROOM_DEFAULT;
+    this._peakCeiling = Math.max(
+      LUFS_PEAK_CEILING,
+      peak * headroomFactor,
+    );
+
+    // Allocate + populate the per-chunk loudness map for the whole
+    // mirror. Updated incrementally by patch/addDelta as denoised
+    // slices replace source content over time.
+    const totalFrames = (this._mirror.length / this.channels) | 0;
+    const numChunks = Math.max(1, Math.ceil(totalFrames / LUFS_CHUNK_FRAMES));
+    this._chunkLoudness = new Float32Array(numChunks);
+    this._chunkPeak = new Float32Array(numChunks);
+    this._refreshChunks(0, totalFrames);
+  }
+
+  /**
+   * Re-measure every chunk that overlaps [startFrame, startFrame+frames).
+   * Cheap because chunks are 0.3 s; a 0.3 s slice typically touches
+   * exactly one or two chunks. Called from patch/addDelta after the
+   * mirror is updated, and from _measureSourceTarget for the full
+   * initial pass.
+   */
+  private _refreshChunks(startFrame: number, frames: number): void {
+    if (!this._mirror || !this._chunkLoudness || !this._chunkPeak) return;
+    const ch = this.channels;
+    const totalFrames = (this._mirror.length / ch) | 0;
+    if (totalFrames === 0 || frames <= 0) return;
+    const numChunks = this._chunkLoudness.length;
+    const firstChunk = Math.max(0, Math.floor(startFrame / LUFS_CHUNK_FRAMES));
+    const lastChunk = Math.min(
+      numChunks - 1,
+      Math.floor((startFrame + frames - 1) / LUFS_CHUNK_FRAMES),
+    );
+    for (let c = firstChunk; c <= lastChunk; c++) {
+      const cStart = c * LUFS_CHUNK_FRAMES;
+      const cEnd = Math.min(cStart + LUFS_CHUNK_FRAMES, totalFrames);
+      const slice = this._mirror.subarray(cStart * ch, cEnd * ch);
+      const { loudness, peak } = measureBlock(slice, ch, this._loudnessMetric);
+      this._chunkLoudness[c] = loudness;
+      this._chunkPeak[c] = peak;
+    }
+  }
+
+  private _meterTick(): void {
+    if (!this._makeupGain || !this.ctx) return;
+    const target = this._sourceTarget;
+    if (target === null) return;
+    const map = this._chunkLoudness;
+    const peakMap = this._chunkPeak;
+    if (!map || !peakMap || !this._mirror) return;
+    const totalFrames = (this._mirror.length / this.channels) | 0;
+    if (totalFrames === 0) return;
+    // Look up loudness/peak of whatever's currently at the playhead,
+    // pre-measured by patch/addDelta when the slice landed. No
+    // sliding-window lag.
+    const posFramesRaw = (this.positionSec * SAMPLE_RATE) | 0;
+    const posFrames =
+      ((posFramesRaw % totalFrames) + totalFrames) % totalFrames;
+    const chunkIdx = Math.min(
+      map.length - 1,
+      Math.floor(posFrames / LUFS_CHUNK_FRAMES),
+    );
+    const measured = map[chunkIdx];
+    const peak = peakMap[chunkIdx];
+    this.lufsMeasured = Number.isFinite(measured) ? measured : null;
+    if (!Number.isFinite(measured)) return;
+    const matchGain = lufsMakeupGain(measured, target, peak, this._peakCeiling);
+    const gain = Math.max(1.0, matchGain);
+    const t = this.ctx.currentTime;
+    this._makeupGain.gain.cancelScheduledValues(t);
+    this._makeupGain.gain.setTargetAtTime(gain, t, LUFS_GAIN_RAMP_TC);
+    if ((globalThis as { __LUFS_TRACE__?: boolean }).__LUFS_TRACE__) {
+      // Diagnostic trace: window.__LUFS_TRACE__ = true to log one line
+      // per tick. Helpful for confirming the matcher snaps to the
+      // right gain the instant a denoised slice lands at the playhead.
+      // eslint-disable-next-line no-console
+      console.log("[LUFS]", {
+        positionSec: +this.positionSec.toFixed(2),
+        chunk: chunkIdx,
+        measured: +measured.toFixed(2),
+        target: +target.toFixed(2),
+        peak: +peak.toFixed(4),
+        ceiling: +this._peakCeiling.toFixed(3),
+        targetGain: +gain.toFixed(3),
+        appliedGain: +this._makeupGain.gain.value.toFixed(3),
+      });
+    }
+  }
+
+  private _extractRecentWindow(seconds: number): Float32Array | null {
+    const mirror = this._mirror;
+    if (!mirror) return null;
+    const ch = this.channels;
+    const totalFrames = (mirror.length / ch) | 0;
+    const wantFrames = Math.min(
+      Math.round(seconds * SAMPLE_RATE),
+      totalFrames,
+    );
+    if (wantFrames < 1) return null;
+    const posFrames = ((this.positionSec * SAMPLE_RATE) | 0) % totalFrames;
+    const startFrame =
+      (((posFrames - wantFrames) % totalFrames) + totalFrames) % totalFrames;
+    const out = new Float32Array(wantFrames * ch);
+    if (startFrame + wantFrames <= totalFrames) {
+      out.set(
+        mirror.subarray(startFrame * ch, (startFrame + wantFrames) * ch),
+      );
+    } else {
+      const tailFrames = totalFrames - startFrame;
+      out.set(mirror.subarray(startFrame * ch));
+      out.set(mirror.subarray(0, (wantFrames - tailFrames) * ch), tailFrames * ch);
+    }
+    return out;
+  }
 
   private _writeSPBuffer(
     startFrame: number,

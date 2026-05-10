@@ -38,6 +38,7 @@ export function OperatorStrip() {
   const showKbdHints = usePerformanceStore((s) => s.showKbdHints);
   const smooth = usePerformanceStore((s) => s.smooth);
   const smoothMs = usePerformanceStore((s) => s.smoothMs);
+  const lufsOn = usePerformanceStore((s) => s.lufsOn);
   const setFixture = usePerformanceStore((s) => s.setFixture);
   const setKey = usePerformanceStore((s) => s.setKey);
   const setTimeSignature = usePerformanceStore((s) => s.setTimeSignature);
@@ -47,6 +48,7 @@ export function OperatorStrip() {
   const toggleKbdHints = usePerformanceStore((s) => s.toggleKbdHints);
   const toggleSmooth = usePerformanceStore((s) => s.toggleSmooth);
   const setSmoothMs = usePerformanceStore((s) => s.setSmoothMs);
+  const toggleLufs = usePerformanceStore((s) => s.toggleLufs);
 
   const customNames = useCustomTracksStore((s) => s.names);
   const addCustomTrack = useCustomTracksStore((s) => s.add);
@@ -83,6 +85,16 @@ export function OperatorStrip() {
       })
       .catch(() => setFixtures([]));
   }, [setFixture, sessionWsUrl]);
+
+  // Push LUFS state to the live AudioPlayer. Re-runs whenever the user
+  // toggles, and whenever a new player instance appears (session
+  // start / restart) so the setting carries across sessions without
+  // the user re-toggling.
+  const player = useSessionStore((s) => s.player);
+  useEffect(() => {
+    if (!player) return;
+    player.setLufs(lufsOn);
+  }, [player, lufsOn]);
 
   async function onFilePicked(file: File) {
     const { setStatus } = useSessionStore.getState();
@@ -326,6 +338,19 @@ export function OperatorStrip() {
           </option>
         ))}
       </select>
+      <button
+        type="button"
+        className={`pause-btn${lufsOn ? " active" : ""}`}
+        title={
+          lufsOn
+            ? "Loudness match ON — quieter passages are boosted to match the loudest seen (peak-clamped at –1 dBTP). Resets on track change. Click to disable."
+            : "Loudness match: continuously meter LUFS, track the running max, boost quieter passages so they hit the loudest level seen this track. Never attenuates."
+        }
+        aria-pressed={lufsOn}
+        onClick={toggleLufs}
+      >
+        LUFS: {lufsOn ? "MATCH" : "OFF"}
+      </button>
       <button
         type="button"
         className={`pause-btn${showKbdHints ? " active" : ""}`}

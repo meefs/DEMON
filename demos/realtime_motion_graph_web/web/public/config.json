@@ -9,7 +9,7 @@
     "crop": 0,
     "steps": 8,
     "fast_vae": true,
-    "_walk_window_help": "When true, route long sources through the walk_window_s (60s) DiT engine by sliding a fixed-T window across the song each tick — keeps the 60s engine's faster parameter-update latency on multi-minute sources. No effect when source ≤ window_s.",
+    "_walk_window_help": "When true, route long sources through the walk_window_s (60s) DiT engine by cutting longer songs into 60 second latents and swapping at boundaries — keeps the 60s engine's faster parameter-update latency on multi-minute sources. No effect when source ≤ window_s.",
     "walk_window": false,
     "walk_window_s": 60,
     "key": "G# minor",
@@ -60,6 +60,14 @@
   },
 
   "seed": 0,
+
+  "_audio_help": "Output audio chain. lufs_enabled toggles the loudness matcher on at boot (operator can still flip it via the LUFS button in-session). lufs_window_sec controls the meter's sliding window. 3s is the standard. Lower = faster response but noisier and prone to high-water spikes on transients. Practical floor ~1.5s. lufs_metric picks the metric: 'lufs' (BS.1770 K-weighted, broadcast standard) or 'dba' (IEC 61672 A-weighted, closer to perceived loudness on bright/distorted content). The matcher always seeds the high-water mark with the source's loudest short-term window at session start, so the louder of {source, denoised} defines the target from t=0 -- no need to wait for the meter to discover it.",
+  "audio": {
+    "lufs_enabled": false,
+    "lufs_window_sec": 1.5,
+    "lufs_metric": "lufs",
+    "lufs_peak_headroom": 4.0
+  },
 
   "_effects_help": "Audio-reactive video shader pipeline (parallax + bloom-on-kick). Both effects pulse with the kick envelope; the perimeter ribbons + DEMON wordmark also pulse with kick via a CSS variable.",
   "effects": {
