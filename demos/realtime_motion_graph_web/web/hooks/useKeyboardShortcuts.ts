@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 
 import { togglePauseAndAudio } from "@/engine/audio/togglePauseAndAudio";
+import { getChannelRange } from "@/lib/config";
 import { usePerformanceStore } from "@/store/usePerformanceStore";
 import { useSessionStore } from "@/store/useSessionStore";
 import { DCW_MODES, DCW_WAVELETS, SLIDER_META } from "@/types/engine";
@@ -74,7 +75,12 @@ export function useKeyboardShortcuts() {
     function bumpParam(param: string, direction: 1 | -1): void {
       const meta = SLIDER_META[param];
       const step = meta?.step ?? 0.05;
-      usePerformanceStore.getState().bumpSlider(param, direction * step);
+      // Reverse channels flip the arrow-key direction so ArrowUp still
+      // means "drive the slider thumb UP" — which on a reverse channel
+      // corresponds to a DECREASE in the engine value. Mirrors the slider
+      // drag and MIDI knob behavior.
+      const dirSign = getChannelRange(param)?.reverse ? -1 : 1;
+      usePerformanceStore.getState().bumpSlider(param, direction * step * dirSign);
     }
 
     function bumpBlend(direction: 1 | -1): void {

@@ -8,7 +8,14 @@ import { SliderGroup } from "./SliderGroup";
 
 interface Props {
   label: string;
-  params: { param: string; label: string; max?: number }[];
+  params: {
+    param: string;
+    label: string;
+    max?: number;
+    min?: number;
+    reverse?: boolean;
+    unity?: number;
+  }[];
 }
 
 const DISPLAY_NAMES: Record<string, string> = {
@@ -118,12 +125,15 @@ export function SliderTile({ label, params }: Props) {
     <div className="mixer-tile" data-tile={label.toLowerCase().replace(/ /g, "-")}>
       <div className="mixer-tile-label">{label}</div>
       <div className="mixer-channels">
-        {params.map(({ param, label: pLabel, max }) => (
+        {params.map(({ param, label: pLabel, max, min, reverse, unity }) => (
           <SliderGroup
             key={param}
             param={param}
             label={pLabel}
             max={max}
+            min={min}
+            reverse={reverse}
+            unity={unity}
             kbd={KBD_FOR_PARAM[param]}
           />
         ))}

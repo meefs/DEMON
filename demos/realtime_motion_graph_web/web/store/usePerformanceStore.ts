@@ -3,6 +3,7 @@
 import { create } from "zustand";
 
 import { frameScheduler } from "@/engine/scheduler/FrameScheduler";
+import { getChannelRange } from "@/lib/config";
 
 import {
   DEFAULT_TIME_SIGNATURE,
@@ -428,10 +429,19 @@ interface PerformanceState {
 }
 
 function clampToMeta(param: string, value: number): number {
+  if (Number.isNaN(value)) return 0;
+  // Operator-configured channel range wins: covers the channel-gain
+  // params (ch_g* / ch*) whose caps live in public/config.json so they
+  // can be tuned per-installation without a rebuild. The reverse flag
+  // doesn't affect clamping (the stored value still lives in [min, max])
+  // — input-side mapping is where reverse is applied.
+  const range = getChannelRange(param);
+  if (range) {
+    return Math.max(range.min, Math.min(range.max, value));
+  }
   const meta = SLIDER_META[param];
   // LoRA sliders (lora_str_<id>) aren't in SLIDER_META — clamp to [0, 2].
   const max = meta?.max ?? 2.0;
-  if (Number.isNaN(value)) return 0;
   return Math.max(0, Math.min(max, value));
 }
 

@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { readKnob } from "@/engine/midi/absoluteDelta";
 import { decodeKnob } from "@/engine/midi/knob";
 import { LORA_SLOT_MARKER, type NoteAction } from "@/engine/midi/types";
+import { getChannelRange } from "@/lib/config";
 import { useCurveStore } from "@/store/useCurveStore";
 import { useLoraStore } from "@/store/useLoraStore";
 import { useMidiStore } from "@/store/useMidiStore";
@@ -74,14 +75,23 @@ function handleCC(cc: number, value: number): void {
   if (!param) return;
 
   const meta = SLIDER_META[param];
-  const max = meta?.max ?? 2.0;
+  // Per-channel range wins over SLIDER_META so MIDI obeys the same caps
+  // as the slider widget. Reverse flips the direction of both absolute
+  // mapping (knob CW → engine value DOWN) and relative deltas (knob
+  // tick UP → engine value DOWN), mirroring SliderGroup's behavior.
+  const range = getChannelRange(param);
+  const min = range?.min ?? 0;
+  const max = range?.max ?? meta?.max ?? 2.0;
+  const span = Math.max(0, max - min);
+  const reverse = range?.reverse ?? false;
   const step = meta?.step ?? 0.05;
+  const dirSign = reverse ? -1 : 1;
 
   const decoded = decodeKnob(cc, value);
   const perf = usePerformanceStore.getState();
   if (decoded.mode === "relative") {
     if (!decoded.delta) return;
-    applyMidiBump(param, decoded.delta * step);
+    applyMidiBump(param, decoded.delta * step * dirSign);
     return;
   }
 
@@ -90,11 +100,13 @@ function handleCC(cc: number, value: number): void {
   // always reaches the bound.
   const reading = readKnob(cc, value);
   if (reading.absolute !== null) {
-    applyMidiSet(param, (reading.absolute / 127) * max);
+    const knobFrac = reading.absolute / 127;
+    const fwd = reverse ? 1 - knobFrac : knobFrac;
+    applyMidiSet(param, min + fwd * span);
     return;
   }
   if (reading.delta === null) return;
-  applyMidiBump(param, (reading.delta / 127) * max);
+  applyMidiBump(param, (reading.delta / 127) * span * dirSign);
 }
 
 /** Setter that propagates to both the perf store (drives engine via

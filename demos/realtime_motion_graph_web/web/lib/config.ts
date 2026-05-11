@@ -113,10 +113,28 @@ export interface RtmgConfigAudio {
  * non-numeric DCW state. Unknown keys are ignored. */
 export type RtmgConfigControls = Record<string, number | boolean | string>;
 
+/** Per-channel slider range + direction. When present, overrides the
+ *  SLIDER_META max for that param and adds a min floor (slider drag,
+ *  MIDI knobs, keyboard bumps, and curve writes all clamp to this
+ *  range via clampToMeta in usePerformanceStore). `reverse` is a UI
+ *  affordance — when true, dragging the slider UP (or turning the
+ *  MIDI knob clockwise, or hitting ArrowUp) sends a LOWER engine
+ *  value. The stored value still lives in [min, max]; only the
+ *  input→value mapping is flipped. Use for channels that "sound
+ *  better when turned down" — the operator's instinct to push up
+ *  produces the desired result. */
+export interface RtmgChannelRange {
+  min: number;
+  max: number;
+  reverse: boolean;
+}
+export type RtmgConfigChannelRanges = Record<string, RtmgChannelRange>;
+
 export interface RtmgConfig {
   engine: RtmgConfigEngine;
   prompts: RtmgConfigPrompts;
   controls: RtmgConfigControls;
+  channel_ranges: RtmgConfigChannelRanges;
   seed: number;
   effects: RtmgConfigEffects;
   audio: RtmgConfigAudio;
@@ -170,6 +188,22 @@ export const DEFAULT_CONFIG: RtmgConfig = {
     dcw_mode: "double",
     dcw_wavelet: "haar",
     lora_default_strength: 1.4,
+  },
+  channel_ranges: {
+    ch_g0: { min: 0, max: 2.2, reverse: false },
+    ch_g1: { min: 0, max: 2.0, reverse: false },
+    ch_g2: { min: 0, max: 2.3, reverse: true },
+    ch_g3: { min: 0, max: 2.0, reverse: false },
+    ch_g4: { min: 0, max: 2.5, reverse: false },
+    ch_g5: { min: 0, max: 2.0, reverse: false },
+    ch_g6: { min: 0, max: 2.0, reverse: true },
+    ch_g7: { min: 0, max: 2.0, reverse: true },
+    ch13: { min: 0, max: 2.0, reverse: true },
+    ch14: { min: 0, max: 2.3, reverse: false },
+    ch19: { min: 0, max: 2.5, reverse: false },
+    ch23: { min: 0, max: 2.45, reverse: false },
+    ch29: { min: 0, max: 2.0, reverse: false },
+    ch56: { min: 0, max: 2.0, reverse: false },
   },
   seed: 0,
   effects: {
@@ -226,6 +260,14 @@ function mergeConfig(
     engine: { ...base.engine, ...(override.engine ?? {}) },
     prompts: { ...base.prompts, ...(override.prompts ?? {}) },
     controls: { ...base.controls, ...(override.controls ?? {}) },
+    // Per-param shallow merge: an override entry replaces the matching
+    // base entry whole (operator-supplied {min,max,reverse} must travel
+    // together to be coherent). Unspecified params keep the bundled
+    // default range.
+    channel_ranges: {
+      ...base.channel_ranges,
+      ...(override.channel_ranges ?? {}),
+    },
     seed: typeof override.seed === "number" ? override.seed : base.seed,
     effects: { ...base.effects, ...(override.effects ?? {}) },
     audio: { ...base.audio, ...(override.audio ?? {}) },
@@ -234,6 +276,14 @@ function mergeConfig(
         ? override.reset_seconds
         : base.reset_seconds,
   };
+}
+
+/** Lookup the active range for `param`, or null if no override is
+ *  configured. Reads from the latest applied config — safe to call
+ *  outside React. Consumers that need reactivity should read
+ *  `useConfig().channel_ranges` instead. */
+export function getChannelRange(param: string): RtmgChannelRange | null {
+  return _activeConfig.channel_ranges[param] ?? null;
 }
 
 /** Fetch /config.json (no cache). Missing file or parse error → defaults
