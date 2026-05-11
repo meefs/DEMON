@@ -22,8 +22,14 @@
 // <canvas class="cursor-canvas"> (see <CustomCursor />).
 
 const ORBIT_RADIUS = 6;
-const SPRING_K = 0.18;
-const DAMPING = 0.78;
+// Spring physics for the orbital cluster. Tuned 2026-05 in response
+// to feedback that the cluster "lagged the cursor then bounced to it"
+// — classic underdamped spring. Bumped K (stiffer pull toward target)
+// and lowered DAMPING (more friction per frame — DAMPING is a velocity
+// multiplier, so smaller = more decay). Result: cluster tracks the
+// cursor tightly with minimal overshoot.
+const SPRING_K = 0.42;
+const DAMPING = 0.60;
 const ROTATION_SPEED = 0.0004;
 const ATTRACTOR_RANGE = 140;
 const ATTRACTOR_GAIN = 0.4;
