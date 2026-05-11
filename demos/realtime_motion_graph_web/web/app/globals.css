@@ -4432,11 +4432,9 @@ body[data-mode="graph"] #install-video-area .focal-side-blur { display: none; }
   opacity: 1;
   visibility: visible;
   transform: translateX(-50%) translateY(0);
-  /* 200ms delay so accidental passes don't flicker the tooltip. */
-  transition:
-    opacity 140ms cubic-bezier(.2, .8, .2, 1) 200ms,
-    visibility 0s linear 200ms,
-    transform 140ms cubic-bezier(.2, .8, .2, 1) 200ms;
+  /* Instant appear (Ableton-style). The base-state transition still
+     governs fade-out, so the tooltip pops in but eases out. */
+  transition: none;
 }
 /* Disable on touch — no real hover, and the active state ::after
    would briefly flash on tap. Accessibility-equivalent info is in
