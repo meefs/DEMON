@@ -130,6 +130,19 @@ export interface RtmgChannelRange {
 }
 export type RtmgConfigChannelRanges = Record<string, RtmgChannelRange>;
 
+/** On session start, snap engine denoise to 0 and play a visual-only
+ * display glide from the slider's prior value down to 0 over `glide_ms`.
+ * The engine value never moves with the glide; purely a "hear the source
+ * first" onboarding cue. Set `enabled: false` to skip the snap entirely;
+ * seed `controls.denoise` to whatever starting value you want in that
+ * case. The glide is only visible when the slider's value at session-start
+ * is non-zero (first session uses controls.denoise; later sessions use
+ * wherever the user left it). */
+export interface RtmgConfigDenoiseSessionGate {
+  enabled: boolean;
+  glide_ms: number;
+}
+
 export interface RtmgConfig {
   engine: RtmgConfigEngine;
   prompts: RtmgConfigPrompts;
@@ -139,6 +152,13 @@ export interface RtmgConfig {
   effects: RtmgConfigEffects;
   audio: RtmgConfigAudio;
   reset_seconds: number;
+  denoise_session_gate: RtmgConfigDenoiseSessionGate;
+  /** Swapping to a new song restarts playback from frame 0. When false,
+   * the worklet keeps its current phase across the swap, so a swap at
+   * 1:30 into a 4:00 track starts the new track at 1:30. The
+   * ScriptProcessor fallback already restarts on swap; this aligns the
+   * worklet path with that behavior and makes it operator-tunable. */
+  restart_song_on_swap: boolean;
 }
 
 export const DEFAULT_CONFIG: RtmgConfig = {
@@ -221,6 +241,11 @@ export const DEFAULT_CONFIG: RtmgConfig = {
     lufs_silence_floor_hysteresis_db: 6.0,
   },
   reset_seconds: 0,
+  denoise_session_gate: {
+    enabled: true,
+    glide_ms: 700,
+  },
+  restart_song_on_swap: true,
 };
 
 let _activeConfig: RtmgConfig = DEFAULT_CONFIG;
@@ -275,6 +300,14 @@ function mergeConfig(
       typeof override.reset_seconds === "number"
         ? override.reset_seconds
         : base.reset_seconds,
+    denoise_session_gate: {
+      ...base.denoise_session_gate,
+      ...(override.denoise_session_gate ?? {}),
+    },
+    restart_song_on_swap:
+      typeof override.restart_song_on_swap === "boolean"
+        ? override.restart_song_on_swap
+        : base.restart_song_on_swap,
   };
 }
 
