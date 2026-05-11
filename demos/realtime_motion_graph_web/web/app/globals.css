@@ -1534,6 +1534,71 @@ body[data-mode="graph"] #install-video-area .focal-side-blur { display: none; }
   background: var(--frame-line);
 }
 
+/* First-run coachmark — floats above the drawer handle to teach new
+   users that more controls live behind it. pointer-events: none so a
+   click on the coachmark falls through to the handle underneath (the
+   document-level pointerdown handler in <AdvancedCoachmark> dismisses
+   the callout while the same click opens the drawer). Single keyframe
+   chain (fade-in forwards → bob loop) — no filter, no backdrop-filter,
+   per PERFORMANCE.md "no unnecessary effects on idle UI". */
+.advanced-coachmark {
+  position: fixed;
+  left: 50%;
+  /* Sit just above the closed-drawer handle peek. When the drawer opens,
+     the parent dismisses the coachmark — no need to track --drawer-h. */
+  bottom: calc(var(--drawer-handle-h, 28px) + 14px);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 12;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.72em;
+  letter-spacing: var(--tracking-wide, 0.18em);
+  text-transform: uppercase;
+  color: var(--text-strong);
+  text-shadow:
+    0 0 6px rgba(0, 0, 0, 0.55),
+    0 0 14px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  animation:
+    advanced-coachmark-fade-in 320ms cubic-bezier(.2, .8, .2, 1) forwards,
+    advanced-coachmark-bob 2.4s ease-in-out infinite 320ms;
+}
+.advanced-coachmark-text { display: inline-block; }
+.advanced-coachmark kbd {
+  display: inline-block;
+  padding: 0 5px;
+  margin: 0 2px;
+  border: 1px solid var(--accent-line, rgba(255, 255, 255, 0.35));
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 0.95em;
+  color: var(--accent, currentColor);
+  background: rgba(255, 255, 255, 0.06);
+}
+.advanced-coachmark-arrow {
+  color: var(--accent, currentColor);
+  font-size: 14px;
+  line-height: 1;
+}
+@keyframes advanced-coachmark-fade-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0);   }
+}
+@keyframes advanced-coachmark-bob {
+  0%, 100% { transform: translate(-50%, 0); }
+  50%      { transform: translate(-50%, -4px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .advanced-coachmark {
+    animation: advanced-coachmark-fade-in 320ms cubic-bezier(.2, .8, .2, 1) forwards;
+  }
+}
+
 /* Drawer body — vertical stack: operator strip across the top, then a
    wrap-flex grid of mixer tiles below. Tiles wrap to the next row before
    anything overflows horizontally — no sideways scrolling. */

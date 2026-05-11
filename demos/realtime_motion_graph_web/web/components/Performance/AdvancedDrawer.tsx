@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useCurveStore } from "@/store/useCurveStore";
 import { usePerformanceStore } from "@/store/usePerformanceStore";
 import { useSessionStore } from "@/store/useSessionStore";
 
+import {
+  AdvancedCoachmark,
+  advancedCoachmarkStorageKey,
+} from "./AdvancedCoachmark";
 import { ChannelGainsTile } from "./ChannelGainsTile";
 import { ChannelsTile } from "./ChannelsTile";
 import { DcwTile } from "./DcwTile";
@@ -75,6 +79,43 @@ export function AdvancedDrawer() {
     };
   }, [open]);
 
+  // First-run coachmark: show once per user on desktop, the first time
+  // the session reaches "ready". Mobile already has the LiteControls
+  // strip + "All controls" link, so the discoverability gap is desktop-
+  // shaped. Dismissal is persisted in localStorage; the actual hide
+  // (any pointerdown / Esc / 8s auto-hide) is wired inside the
+  // coachmark component, which calls back into handleCoachmarkDismiss.
+  const [coachmarkVisible, setCoachmarkVisible] = useState(false);
+  const handleCoachmarkDismiss = useCallback(() => {
+    setCoachmarkVisible(false);
+    try {
+      localStorage.setItem(advancedCoachmarkStorageKey, "1");
+    } catch {
+      // localStorage may be unavailable (private browsing, quota). The
+      // worst case is the user sees the coachmark next session; not
+      // worth crashing the drawer over.
+    }
+  }, []);
+  useEffect(() => {
+    if (isMobile) return;
+    if (status !== "ready") return;
+    if (open) return; // user already discovered the drawer some other way
+    try {
+      if (localStorage.getItem(advancedCoachmarkStorageKey) === "1") return;
+    } catch {
+      // If we can't read localStorage, treat the user as first-run;
+      // showing the coachmark once is friendlier than never showing it.
+    }
+    setCoachmarkVisible(true);
+  }, [isMobile, status, open]);
+  // If the user opens the drawer some other way (keyboard, click on
+  // the handle, future custom event), retire the coachmark.
+  useEffect(() => {
+    if (open && coachmarkVisible) {
+      handleCoachmarkDismiss();
+    }
+  }, [open, coachmarkVisible, handleCoachmarkDismiss]);
+
   return (
     <>
       <aside
@@ -136,6 +177,11 @@ export function AdvancedDrawer() {
           onClose={() => setAllOpen(false)}
         />
       )}
+
+      <AdvancedCoachmark
+        visible={coachmarkVisible}
+        onDismiss={handleCoachmarkDismiss}
+      />
     </>
   );
 }
