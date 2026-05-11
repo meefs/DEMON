@@ -80,7 +80,7 @@ export function RecordToggle() {
       }}
       disabled={busy}
       aria-label={active ? "Stop recording" : "Record audio"}
-      title={active ? "Stop recording (R)" : "Record audio (R)"}
+      data-dd-tooltip={active ? "Stop recording (R)" : "Record audio (R)"}
     >
       {state.kind === "recording" && (
         <span className="rec-btn-dot" aria-hidden="true" />

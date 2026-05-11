@@ -189,7 +189,7 @@ export function AudioSourceCrate() {
           aria-haspopup="menu"
           aria-expanded={open}
           aria-label={`Pick audio track. Current: ${displayedName}`}
-          title={`Audio source: ${displayedName}`}
+          data-dd-tooltip={`Audio source: ${displayedName}`}
         >
           <span className="audio-source-marquee-rows">
             <span className="audio-source-marquee-label">
@@ -215,7 +215,7 @@ export function AudioSourceCrate() {
           disabled={uploading}
           onClick={() => fileInputRef.current?.click()}
           aria-label="Upload your own audio track"
-          title={uploading ? "Decoding…" : "Upload your own audio track"}
+          data-dd-tooltip={uploading ? "Decoding…" : "Upload your own audio track"}
         >
           <UploadIcon size={16} />
         </button>
@@ -262,7 +262,7 @@ export function AudioSourceCrate() {
             className="audio-source-sleeve audio-source-sleeve--upload"
             disabled={uploading}
             onClick={() => fileInputRef.current?.click()}
-            title="Upload your own audio track"
+            data-dd-tooltip="Upload your own audio track"
           >
             <span
               className="audio-source-sleeve-art audio-source-sleeve-art--upload"

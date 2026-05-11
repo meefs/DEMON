@@ -11,7 +11,7 @@ export function MidiBadge() {
   const status = useMidiStore((s) => s.status);
   const cls = `midi-badge midi-${status.tone}`;
   return (
-    <div className={cls} title="MIDI status — right-click any slider to learn">
+    <div className={cls} data-dd-tooltip="MIDI status — right-click any slider to learn">
       {status.message}
     </div>
   );

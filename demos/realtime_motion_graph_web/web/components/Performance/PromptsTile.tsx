@@ -69,7 +69,7 @@ export function PromptsTile() {
           id="send-prompt"
           className="send-prompt-btn"
           data-midi-learn="send_prompt"
-          title="Send prompt — Enter (out of textarea) or ⌘/Ctrl + Enter (in textarea); right-click to MIDI-learn"
+          data-dd-tooltip="Send prompt — Enter (out of textarea) or ⌘/Ctrl + Enter (in textarea); right-click to MIDI-learn"
           type="button"
           onClick={sendPrompt}
         >

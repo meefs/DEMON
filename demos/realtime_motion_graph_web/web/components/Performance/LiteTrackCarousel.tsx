@@ -179,7 +179,7 @@ export function LiteTrackCarousel() {
           className="lite-track-chip lite-track-chip--upload"
           disabled={uploading}
           onClick={() => fileInputRef.current?.click()}
-          title="Upload audio track"
+          data-dd-tooltip="Upload audio track"
           aria-label="Upload audio track"
         >
           <span className="lite-track-chip-icon" aria-hidden="true">

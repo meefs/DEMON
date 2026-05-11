@@ -198,7 +198,7 @@ export function OperatorStrip() {
       <button
         type="button"
         className="pause-btn"
-        title={uploading ? "Decoding…" : "Upload audio track"}
+        data-dd-tooltip={uploading ? "Decoding…" : "Upload audio track"}
         aria-label="Upload audio track"
         disabled={uploading}
         onClick={() => fileInputRef.current?.click()}
@@ -315,7 +315,7 @@ export function OperatorStrip() {
         id="kiosk-toggle"
         className={`pause-btn${kiosk ? " active" : ""}`}
         data-midi-learn="kiosk_toggle"
-        title="Toggle kiosk mode — auto-hide cursor + idle reset (right-click to MIDI-learn)"
+        data-dd-tooltip="Toggle kiosk mode — auto-hide cursor + idle reset (right-click to MIDI-learn)"
         type="button"
         onClick={toggleKiosk}
       >
@@ -325,7 +325,7 @@ export function OperatorStrip() {
         type="button"
         className={`pause-btn${overlayOpen ? " active" : ""}`}
         data-midi-learn="schedule_curves_toggle"
-        title="Open the curve scheduler — draw param automation against the track (right-click to MIDI-learn)"
+        data-dd-tooltip="Open the curve scheduler — draw param automation against the track (right-click to MIDI-learn)"
         onClick={toggleOverlay}
       >
         SCHEDULE CURVES
@@ -336,7 +336,7 @@ export function OperatorStrip() {
       <button
         type="button"
         className={`pause-btn${smooth ? " active" : ""}`}
-        title={
+        data-dd-tooltip={
           smooth
             ? `Smooth slider transitions over ${smoothMs} ms — click to disable`
             : "Smooth slider transitions: slider drags + MIDI knob movement glide to their target over the chosen duration. The visual stays instant."
@@ -362,7 +362,7 @@ export function OperatorStrip() {
       <button
         type="button"
         className={`pause-btn${lufsOn ? " active" : ""}`}
-        title={
+        data-dd-tooltip={
           lufsOn
             ? "Loudness match ON — quieter passages are boosted to match the loudest seen (peak-clamped at –1 dBTP). Resets on track change. Click to disable."
             : "Loudness match: continuously meter LUFS, track the running max, boost quieter passages so they hit the loudest level seen this track. Never attenuates."
@@ -375,7 +375,7 @@ export function OperatorStrip() {
       <button
         type="button"
         className={`pause-btn${showKbdHints ? " active" : ""}`}
-        title="Show keyboard-shortcut hints under each slider"
+        data-dd-tooltip="Show keyboard-shortcut hints under each slider"
         aria-pressed={showKbdHints}
         onClick={toggleKbdHints}
       >
@@ -384,7 +384,7 @@ export function OperatorStrip() {
       <button
         type="button"
         className="pause-btn"
-        title="Reset all sliders + LoRAs to defaults. Does NOT touch MIDI mapping, automation curves, or persisted UI prefs."
+        data-dd-tooltip="Reset all sliders + LoRAs to defaults. Does NOT touch MIDI mapping, automation curves, or persisted UI prefs."
         onClick={async () => {
           const ok = await confirm({
             title: "Reset",
@@ -404,7 +404,7 @@ export function OperatorStrip() {
         type="button"
         className="pause-btn pause-btn--right"
         data-midi-learn="seek_start"
-        title="Seek to beginning (right-click to MIDI-learn)"
+        data-dd-tooltip="Seek to beginning (right-click to MIDI-learn)"
         aria-label="Seek to beginning"
         onClick={() => {
           const p = useSessionStore.getState().player;
@@ -417,7 +417,7 @@ export function OperatorStrip() {
         id="pause-btn"
         className="pause-btn"
         data-midi-learn="pause"
-        title="Pause/Resume (right-click to MIDI-learn)"
+        data-dd-tooltip="Pause/Resume (right-click to MIDI-learn)"
         type="button"
         onClick={togglePauseAndAudio}
       >
@@ -427,7 +427,7 @@ export function OperatorStrip() {
         type="button"
         className={`pause-btn${loopOn ? " active" : ""}`}
         data-midi-learn="loop_toggle"
-        title={
+        data-dd-tooltip={
           loopOn
             ? "Loop ON — playhead wraps at end-of-buffer (right-click to MIDI-learn)"
             : "Loop OFF — playback stops at end-of-buffer; click ⏮ to restart"

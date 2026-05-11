@@ -38,7 +38,7 @@ export function DcwTile() {
             type="button"
             className={`dcw-toggle${dcwEnabled ? " active" : ""}`}
             data-role="dcw-enabled"
-            title="Toggle DCW (T)"
+            data-dd-tooltip="Toggle DCW (T)"
             onClick={toggleDcw}
           >
             DCW: {dcwEnabled ? "ON" : "OFF"}

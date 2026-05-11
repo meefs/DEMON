@@ -162,7 +162,7 @@ export function AdvancedDrawer() {
           className={`install-drawer-handle${started ? "" : " install-drawer-handle--disabled"}`}
           aria-label="Toggle advanced controls drawer"
           aria-disabled={!started}
-          title={started ? "Advanced Controls (o)" : "Press Play to enable"}
+          data-dd-tooltip={started ? "Advanced Controls (o)" : "Press Play to enable"}
           onClick={() => {
             if (!started) return;
             setOpen((v) => !v);

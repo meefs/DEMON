@@ -629,7 +629,7 @@ export function ScheduleCurvesOverlay() {
           type="button"
           className="schedule-curves-master"
           onClick={() => resetCurve(activeCurve)}
-          title={`Clear the current curve (${labelFor(activeCurve)}) — flattens it back to the midline.`}
+          data-dd-tooltip={`Clear the current curve (${labelFor(activeCurve)}) — flattens it back to the midline.`}
         >
           CLEAR
         </button>
@@ -643,7 +643,7 @@ export function ScheduleCurvesOverlay() {
             (scheduleEnabled ? " schedule-curves-master--on" : "")
           }
           onClick={toggleScheduleEnabled}
-          title={
+          data-dd-tooltip={
             scheduleEnabled
               ? "Curves are driving sliders. Click to pause all automation."
               : "All curves paused. Click to resume."
@@ -656,7 +656,8 @@ export function ScheduleCurvesOverlay() {
           className="schedule-curves-close"
           onClick={closeOverlay}
           aria-label="Close schedule curves"
-          title="Close (Esc)"
+          data-dd-tooltip="Close (Esc)"
+          data-dd-tooltip-pos="below"
         >
           ×
         </button>

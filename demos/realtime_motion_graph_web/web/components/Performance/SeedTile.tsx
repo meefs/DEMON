@@ -13,7 +13,7 @@ export function SeedTile() {
           id="seed-btn"
           className="seed-btn"
           data-midi-learn="seed"
-          title="Randomize seed (right-click to MIDI-learn)"
+          data-dd-tooltip="Randomize seed (right-click to MIDI-learn)"
           type="button"
           onClick={randomize}
           aria-label="Randomize seed"
