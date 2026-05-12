@@ -229,7 +229,6 @@ const DEFAULT_SLIDER_VALUES: Record<string, number> = {
   lora_blend: 0.5,
   feedback: 0.0,
   shift: 0.5,
-  noise_share: 0.0,
   ode_noise: 0.0,
   ch_g0: 1.0,
   ch_g1: 1.0,

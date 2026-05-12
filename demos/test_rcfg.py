@@ -137,7 +137,7 @@ def run_config(
     configurations see byte-identical noise tensors and any output
     difference is purely from the RCFG branch logic."""
     print(f"\n[{label}]  rcfg_mode={rcfg_mode}  guidance={guidance_curve is not None}")
-    pipe = StreamPipeline(engine, config, noise_sharing=0.0)
+    pipe = StreamPipeline(engine, config)
 
     rng = torch.Generator(device=device).manual_seed(SEED_BASE)
     call_count = {"n": 0}
@@ -239,7 +239,7 @@ def main():
     engine = handler._diffusion_engine
     print(f"  loaded in {time.time()-t0:.1f}s")
 
-    # --- Source audio for semantic context (same setup as the noise-sharing test) ---
+    # --- Source audio for semantic context ---
     print("[Setup] source audio + text encode...")
     audio_path = audio_fixture("inside_confusion_loop_60s_gsm.wav")
     data, sr = sf.read(str(audio_path), dtype="float32")

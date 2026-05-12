@@ -7,9 +7,9 @@ import { SliderGroup } from "./SliderGroup";
 import { defaultLabelFor, kbdHintFor } from "./SliderTile";
 
 // Engine tile. Engine-internal scalars on the top (feedback, shift,
-// noise_share, ode_noise), plus a conditional CFG cluster
-// (guidance_scale, cfg_rescale) when RCFG is not off, plus the RCFG
-// mode dropdown in the bottom strip mirroring DcwTile's layout.
+// ode_noise), plus a conditional CFG cluster (guidance_scale,
+// cfg_rescale) when RCFG is not off, plus the RCFG mode dropdown in
+// the bottom strip mirroring DcwTile's layout.
 //
 // The CFG sliders only appear when ``rcfgMode != "off"`` — keeping
 // them visible when guidance is disabled is just visual noise (the
@@ -20,7 +20,6 @@ import { defaultLabelFor, kbdHintFor } from "./SliderTile";
 const ALWAYS_SLIDERS = [
   "feedback",
   "shift",
-  "noise_share",
   "ode_noise",
 ];
 

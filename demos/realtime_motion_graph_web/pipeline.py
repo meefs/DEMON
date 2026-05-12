@@ -432,8 +432,6 @@ class PipelineRunner:
                     last_hint_str = hint_str
                     self._update_hint_strength(hint_str)
 
-            noise_sharing = self.midi_knobs.get_param("noise_share") if self.use_midi else 0.0
-
             source_lat = None
             if feedback > 0.0 and last_latent is not None:
                 src_tensor = live_src_lat.tensor
@@ -458,8 +456,6 @@ class PipelineRunner:
             else:
                 denoise = k1
                 self.sde_curve_display[0] = None
-
-            effective_seed = None if noise_sharing > 0.01 else seed
 
             ode_curve = _curve_from_spec(raw.get("ode_noise_curve"), src_T)
             if ode_curve is None:
@@ -541,7 +537,7 @@ class PipelineRunner:
                     tick_kwargs["negative"] = self.neg_conditioning
             result_latent = self.stream.tick(
                 denoise=denoise,
-                seed=effective_seed,
+                seed=seed,
                 source_latent=(
                     Latent(tensor=source_lat) if source_lat is not None
                     else live_src_lat
@@ -549,7 +545,6 @@ class PipelineRunner:
                 x0_target=x0_tgt,
                 x0_target_curve=x0_target_curve,
                 shift=current_shift,
-                noise_sharing=noise_sharing,
                 initial_noise_curve=initial_noise_curve,
                 **tick_kwargs,
                 # DCW (wavelet-domain post-step correction). Forwarded
@@ -715,7 +710,6 @@ class PipelineRunner:
                 if self.use_sde:
                     self.params["periodicity"] = round(raw.get("periodicity", 0.0), 2)
                 self.params["hint_strength"] = round(hint_str, 2)
-                self.params["noise_share"] = round(raw.get("noise_share", 0.0), 2)
                 self.params["ode_noise"] = round(ode_noise_val, 2)
                 for name, _, _ in CHANNEL_GROUPS:
                     self.params[name] = round(raw.get(name, 1.0), 2)

@@ -23,7 +23,6 @@ const GRAPH_COLORS: Record<string, RGB> = {
   feedback: [240, 138, 72],
   shift: [232, 79, 61],
   hint_strength: [199, 181, 102],
-  noise_share: [61, 182, 190],
   ode_noise: [199, 181, 102],
   seed: [240, 138, 72],
   ch_g0: [255, 80, 80],

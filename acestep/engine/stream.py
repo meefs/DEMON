@@ -220,14 +220,12 @@ class StreamPipeline:
         self,
         engine: DiffusionEngine,
         config: DiffusionConfig,
-        noise_sharing: float = 0.0,
         pipeline_depth: Optional[int] = None,
     ):
         self.engine = engine
         self.decoder = engine.decoder
         self.model = engine.model
         self.config = config
-        self.noise_sharing = noise_sharing  # 0.0=off, 0.3-0.7 typical
 
         # Decouple ring buffer depth from denoising step count.
         # Default: depth = infer_steps (classic StreamDiffusion).
@@ -236,9 +234,6 @@ class StreamPipeline:
         # Pipeline state
         self._slots: List[Optional[_Slot]] = [None] * self._depth
         self._queue: List[SlotRequest] = []
-
-        # Shared noise: last noise tensor used, for blending into next gen
-        self._last_noise: Optional[torch.Tensor] = None
 
         # Cached device/dtype (set on first submit)
         self._device: Optional[torch.device] = None
@@ -457,13 +452,6 @@ class StreamPipeline:
 
         t_schedule = self._get_schedule(request.denoise)
         noise = self._make_noise(request)
-
-        # Noise sharing: blend with previous generation's noise
-        alpha = self.noise_sharing
-        if alpha > 0.0 and self._last_noise is not None:
-            if self._last_noise.shape == noise.shape:
-                noise = alpha * self._last_noise + (1.0 - alpha**2) ** 0.5 * noise
-        self._last_noise = noise.clone()
 
         t_start = t_schedule[0].item()
 
@@ -1418,7 +1406,6 @@ class StreamPipeline:
         - In-flight slot tensors (``_slots``) and the queued requests'
           backing tensors (``_queue``) — each slot's ``xt`` is a
           ``[1, T, 64]`` bf16 latent.
-        - The shared noise tensor (``_last_noise``).
         - The schedule cache, compiled ODE/SDE step graphs, sentinel
           tensors, channel-gain tensor, and shared-curve dict.
         - The TRT engine/context refs we captured from ``DiffusionEngine``.
@@ -1430,7 +1417,6 @@ class StreamPipeline:
         """
         self._slots = []
         self._queue = []
-        self._last_noise = None
         self._trt_bufs = None
         self._trt_out_buf = None
         self._trt_bufs_cache.clear()

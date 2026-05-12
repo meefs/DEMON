@@ -16,7 +16,7 @@ import { DCW_MODES, DCW_WAVELETS, SLIDER_META } from "@/types/engine";
 //   G + ▲▼      structure (hint_strength)
 //   C + ▲▼      timbre (timbre_strength)
 //   B + ▲▼      prompt blend
-//   E/H/N/D + ▲▼   feedback / shift / nshare / ode (engine)
+//   E/H/D + ▲▼  feedback / shift / ode (engine)
 //   W/Y + ▲▼    DCW low / DCW high
 //   T            toggle DCW on/off
 //   Shift+T      cycle DCW mode
@@ -38,7 +38,6 @@ const HELD_DIGITS = new Set<string>(); // KeyboardEvent.code, e.g. "Digit3"
 const ENGINE_DCW_CHORDS: Record<string, string> = {
   e: "feedback",
   h: "shift",
-  n: "noise_share",
   d: "ode_noise",
   w: "dcw_scaler",
   y: "dcw_high_scaler",
