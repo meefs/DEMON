@@ -3617,7 +3617,11 @@ body[data-mode="graph"] #install-video-area .focal-side-blur { display: none; }
   left: 50%;
   bottom: 96px;
   transform: translateX(-50%);
-  z-index: 12;
+  /* Above .waveform-scrub-box (z:60) so the Save / Share / Discard
+     buttons aren't covered or click-intercepted by the scrub strip,
+     which sits at the same bottom edge. Still below full-screen modal
+     backdrops (z:100+). */
+  z-index: 70;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -4494,14 +4498,14 @@ body.drawer-open .waveform-scrub-box[data-curves-open="true"] {
   left: 50%;
   transform: translateX(-50%) translateY(4px);
   padding: 5px 10px 4px;
+  /* Solid sheet body + frame-line border. The earlier layered-gradient
+     trick painted a brand hairline along a transparent top border via
+     background-clip: padding-box, border-box; visually it read as a
+     soft halo that made the tooltip feel translucent against the dark
+     canvas. A plain border + deeper drop shadow keeps the chrome
+     vocabulary (matches .halo-menu body) and reads as fully opaque. */
   background: var(--sheet-bg);
   border: 1px solid var(--frame-line);
-  border-top: 2px solid transparent;
-  background-image:
-    linear-gradient(var(--sheet-bg), var(--sheet-bg)),
-    var(--dd-gradient);
-  background-origin: padding-box, border-box;
-  background-clip: padding-box, border-box;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: 9px;
@@ -4514,7 +4518,7 @@ body.drawer-open .waveform-scrub-box[data-curves-open="true"] {
   opacity: 0;
   visibility: hidden;
   box-shadow:
-    0 6px 18px rgba(0, 0, 0, 0.45),
+    0 6px 18px rgba(0, 0, 0, 0.55),
     0 0 14px rgba(240, 138, 72, 0.15);
   transition:
     opacity 140ms cubic-bezier(.2, .8, .2, 1),
