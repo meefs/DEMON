@@ -270,75 +270,6 @@ export function OperatorStrip() {
           <path d="M2.5 10v3a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-3" />
         </svg>
       </button>
-      {/* Import config — paired with Export below. Layers the loaded
-          JSON on top of the live config via mergeConfig. Accepts both
-          DEMON's own exports and demon-public-demo share files (the
-          extension fields drop silently in mergeConfig). */}
-      <button
-        type="button"
-        className="pause-btn"
-        data-dd-tooltip="Import config"
-        aria-label="Import config"
-        onClick={() => configFileInputRef.current?.click()}
-      >
-        <svg
-          viewBox="0 0 16 16"
-          width={14}
-          height={14}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.4}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          {/* curly braces — universal "config" signal */}
-          <path d="M5 2.5C4 2.5 3.5 3 3.5 4v2c0 1-1 1.5-1 2 0 .5 1 1 1 2v2c0 1 .5 1.5 1.5 1.5" />
-          <path d="M11 2.5c1 0 1.5.5 1.5 1.5v2c0 1 1 1.5 1 2 0 .5-1 1-1 2v2c0 1-.5 1.5-1.5 1.5" />
-          {/* down arrow between the braces — "import in" */}
-          <path d="M8 5v5" />
-          <path d="M6 8.5 8 10.5 10 8.5" />
-        </svg>
-      </button>
-      {/* Export config — snapshot the live stores into an RtmgConfig
-          JSON and download. Complements demon-public-demo's
-          ShareDialog Download button — same shape on both sides. */}
-      <button
-        type="button"
-        className="pause-btn"
-        data-dd-tooltip="Export config"
-        aria-label="Export config"
-        onClick={onExportConfig}
-      >
-        <svg
-          viewBox="0 0 16 16"
-          width={14}
-          height={14}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.4}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M5 2.5C4 2.5 3.5 3 3.5 4v2c0 1-1 1.5-1 2 0 .5 1 1 1 2v2c0 1 .5 1.5 1.5 1.5" />
-          <path d="M11 2.5c1 0 1.5.5 1.5 1.5v2c0 1 1 1.5 1 2 0 .5-1 1-1 2v2c0 1-.5 1.5-1.5 1.5" />
-          {/* up arrow between the braces — "export out" */}
-          <path d="M8 11V6" />
-          <path d="M6 7.5 8 5.5 10 7.5" />
-        </svg>
-      </button>
-      <input
-        ref={configFileInputRef}
-        type="file"
-        accept=".json,application/json"
-        style={{ display: "none" }}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          e.target.value = "";
-          if (file) void onConfigFilePicked(file);
-        }}
-      />
       <input
         ref={fileInputRef}
         type="file"
@@ -558,6 +489,48 @@ export function OperatorStrip() {
       >
         ↻
       </button>
+
+      {/* Import + Export config — far right of the strip, local-mode
+          only. These are developer / power-user affordances for
+          dialing in a pod's config.json without SSH-editing; the live
+          deployed product hides them entirely (LOCAL_MODE === false).
+          mergeConfig drops unknown top-level keys so demon-public-demo
+          share files (with the `tracks` extension) import as a base
+          config without error. */}
+      {LOCAL_MODE && (
+        <>
+          <button
+            type="button"
+            className="pause-btn"
+            style={{ marginLeft: "auto" }}
+            data-dd-tooltip="Import config from JSON"
+            aria-label="Import config"
+            onClick={() => configFileInputRef.current?.click()}
+          >
+            Import
+          </button>
+          <button
+            type="button"
+            className="pause-btn"
+            data-dd-tooltip="Download current config as JSON"
+            aria-label="Export config"
+            onClick={onExportConfig}
+          >
+            Export
+          </button>
+          <input
+            ref={configFileInputRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void onConfigFilePicked(file);
+            }}
+          />
+        </>
+      )}
 
       {pending && (
         <AlmostReadyDialog
