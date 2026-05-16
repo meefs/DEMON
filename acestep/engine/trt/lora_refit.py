@@ -8,6 +8,8 @@ prefix space.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Dict, Optional, Set
 
 from loguru import logger
@@ -45,6 +47,7 @@ class TRTLoRAManager(LoRAManagerBase):
         device: torch.device = torch.device("cuda"),
         trt_weight_prefix: str = "decoder.",
         checkpoint_path: Optional[str] = None,
+        engine_path: Optional[str] = None,
     ):
         import tensorrt as trt
 
@@ -53,6 +56,39 @@ class TRTLoRAManager(LoRAManagerBase):
         self._trt_prefix = trt_weight_prefix
         self._trt = trt
         self._trt_logger = trt.Logger(trt.Logger.WARNING)
+
+        # Per-param transpose flag: True if the engine slot stores the
+        # weight in ONNX MatMul's ``[in_dim, out_dim]`` orientation (dynamo
+        # output) instead of torch nn.Linear's ``[out_dim, in_dim]``.
+        # Populated from a sidecar refit manifest emitted by
+        # ``rename_val_initializers_to_fqn`` next to the ONNX, then copied
+        # next to the engine by the build pipeline. Absent manifest means
+        # all weights use torch orientation (legacy torchscript path).
+        self._transpose_for_engine: Dict[str, bool] = {}
+        if engine_path is not None:
+            manifest_path = Path(str(engine_path) + ".refit_manifest.json")
+            if manifest_path.is_file():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    transposed = manifest.get("weights_transposed", [])
+                    prefix = trt_weight_prefix
+                    for fqn in transposed:
+                        # Manifest entries are engine-namespace ("decoder.X");
+                        # strip the prefix to match the param-name keys used
+                        # by the manager elsewhere.
+                        if fqn.startswith(prefix):
+                            self._transpose_for_engine[fqn[len(prefix):]] = True
+                    logger.info(
+                        "Refit manifest loaded: {} transposed-layout weights",
+                        len(self._transpose_for_engine),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to read refit manifest at {}: {}. LoRA refit "
+                        "will assume torch [out, in] orientation; for dynamo-"
+                        "built engines this produces wrong outputs under LoRA.",
+                        manifest_path, exc,
+                    )
 
         # TRT dtype -> numpy dtype
         _trt_to_np = {trt.float32: np.float32, trt.float16: np.float16}
@@ -116,6 +152,14 @@ class TRTLoRAManager(LoRAManagerBase):
                 continue
 
             base = raw_w.to(dtype=torch_dt).cpu().contiguous()
+            # If the engine stored this weight transposed (dynamo MatMul
+            # layout), keep our base + refit buffer in the same
+            # orientation so the bytes we hand to ``set_named_weights``
+            # match the slot's memory layout. Deltas arrive in torch
+            # [out, in] from ``_compute_deltas`` and are transposed
+            # on the fly inside ``_apply_to_engine``.
+            if self._transpose_for_engine.get(param_name, False) and base.dim() == 2:
+                base = base.transpose(0, 1).contiguous()
             self._param_to_trt[param_name] = trt_name
             self._base_weights[param_name] = base
             self._refit_bufs[param_name] = torch.empty_like(base)
@@ -162,13 +206,21 @@ class TRTLoRAManager(LoRAManagerBase):
             buf = self._refit_bufs[param_name]
             buf.copy_(self._base_weights[param_name])
 
+            transpose_delta = self._transpose_for_engine.get(param_name, False)
             for entry in self._loras.values():
                 if entry.state != LoRAState.ENABLED:
                     continue
                 if entry.strength == 0.0:
                     continue
                 if entry.deltas and param_name in entry.deltas:
-                    buf.add_(entry.deltas[param_name], alpha=entry.strength)
+                    delta = entry.deltas[param_name]
+                    # Deltas live in torch nn.Linear's [out, in] orientation.
+                    # If the engine slot stores [in, out] (dynamo MatMul),
+                    # transpose before accumulating into the engine-layout
+                    # buffer. add_ requires shape match with buf.
+                    if transpose_delta and delta.dim() == 2:
+                        delta = delta.transpose(0, 1).contiguous()
+                    buf.add_(delta, alpha=entry.strength)
 
             arr = buf.numpy()
             ok = refitter.set_named_weights(trt_name, arr)

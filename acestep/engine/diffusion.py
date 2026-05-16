@@ -191,6 +191,7 @@ class DiffusionEngine:
                 device=torch.device("cuda"),
                 trt_weight_prefix="decoder.",
                 checkpoint_path=ckpt_path,
+                engine_path=str(engine_path),
             )
             # Pre-register the on-disk library (MODELS_DIR/loras).  This
             # is the catalog backing the "infinite library" workflow:

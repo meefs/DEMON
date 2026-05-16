@@ -64,6 +64,11 @@ class _LinearFp16Wrapper(nn.Module):
     plus its two casts, which empirically survives strongly_typed
     compilation. The inner Linear's input is post-RMSNorm * AdaLN scale,
     bounded inside fp16 range.
+
+    Note: dynamo exports lose the FQN for these wrapped Linears (every
+    wrapped weight becomes an anonymous ``val_*`` SSA value in the
+    ONNX initializer list). The build pipeline patches that back via
+    a fingerprint pass — see :func:`rename_val_initializers_to_fqn`.
     """
 
     def __init__(self, inner: nn.Module):
@@ -612,9 +617,274 @@ def export_decoder_onnx(
     # Keep patched ONNX protobufs next to the source file so those relative
     # external_data references continue to resolve during TRT parsing.
 
+    # Dynamo lifts every wrapped-Linear weight as an anonymous ``val_*``
+    # initializer, which breaks TRT refit (LoRA targets resolve to
+    # nothing). Re-attach the FQN by fingerprinting each ``val_*``
+    # against the live decoder's 2D parameters. Cheap (~few seconds)
+    # and only runs once per ONNX export.
+    if config.for_refit and use_dynamo:
+        rename_val_initializers_to_fqn(
+            onnx_path=onnx_path,
+            decoder=wrapper.decoder,
+        )
+
     size_mb = onnx_path.stat().st_size / (1 << 20)
     logger.info("ONNX saved to {} ({:.1f} MB)", onnx_path, size_mb)
     return onnx_path
+
+
+def rename_val_initializers_to_fqn(
+    onnx_path: Union[str, Path],
+    decoder: nn.Module,
+) -> int:
+    """Replace ``val_*`` initializer names with their torch FQNs (proto-only).
+
+    The bf16-hybrid recipe wraps Linears in ``_LinearFp16Wrapper``; the
+    dynamo exporter lifts each wrapped weight as an anonymous SSA
+    ``val_*`` initializer instead of preserving the FQN. TRT refit
+    addresses weights by their ONNX name, so anonymous slots can't
+    receive LoRA deltas keyed by ``layers.X.self_attn.q_proj.weight``.
+
+    This pass matches each ``val_*`` initializer to a torch parameter
+    by **exact byte hash** at the parameter's native dtype, and renames
+    it to the FQN that the runtime decoder (unwrapped) uses — i.e.
+    ``.inner.`` is stripped from the wrapped path so LoRA delta keys
+    resolve directly. ONNX MatMul stores Linear weights transposed
+    relative to ``nn.Linear.weight``, so both orientations are hashed.
+
+    Byte-hash, not L2 fingerprint: an earlier ``(shape, L2)`` cohort
+    match with a 1e-3 tolerance silently misrouted 96 of 264 LoRA
+    target weights in the 2B bf16-hybrid recipe — many fp16 Linears
+    of the same shape have L2 norms close enough to collide, and the
+    rename happily wrote each ``val_*`` to whichever same-shape FQN
+    happened to be unclaimed. LoRA refit then materialized 192 deltas
+    into wrong matmul slots, producing a ~20× larger output delta on
+    NEW vs the pre-bf16 reference engine. Exact bytes can't collide
+    unless two parameters genuinely contain the same numbers.
+
+    The rename operates **only on the proto file**: external-data
+    files emitted by dynamo are not re-read or re-written, so weight
+    bytes are byte-for-byte preserved on disk. An earlier version
+    used ``onnx.load(load_external_data=True) -> onnx.save(...)`` and
+    silently re-encoded the dynamo graph (the consolidated .data file
+    doubled from 3.15 GB to 6.5 GB, with 376 BFLOAT16 initializers
+    flipped to FLOAT16/FLOAT), destroying the strongly-typed dtype
+    layout the bf16-hybrid recipe relies on. The proto-only path
+    here cannot mutate weight bytes or dtypes by construction.
+
+    Returns the number of renamed initializers.
+    """
+    import hashlib
+
+    import onnx
+    from onnx import TensorProto
+    import numpy as np
+
+    onnx_path = Path(onnx_path)
+    # IMPORTANT: load proto only. Loading external data would populate
+    # raw_data fields; the matching save call would then re-emit them
+    # via onnx's external-data writer, which has been observed to
+    # drift initializer dtype/encoding for this graph. We need name
+    # changes only — raw bytes must stay verbatim on disk.
+    model = onnx.load(str(onnx_path), load_external_data=False)
+    base_dir = onnx_path.parent
+
+    def _sha(b: bytes) -> bytes:
+        return hashlib.sha256(b).digest()
+
+    # ------------------------------------------------------------------
+    # Build the torch-side hash index. For each 2D parameter, we record
+    # its raw bytes at the parameter's native dtype in two orientations:
+    # the torch storage [out, in] and the transposed [in, out] that
+    # ONNX MatMul uses. Dynamo writes weights into the ONNX graph in
+    # whichever orientation the traced matmul consumes, so we must
+    # match either layout. We do NOT cast across dtypes (fp16 <-> bf16
+    # bytes are not equal even for the same numerical value); the
+    # 2B bf16-hybrid recipe keeps each param in its declared dtype
+    # (fp16 for wrapped Linears, fp32 for islands, bf16 for trunk).
+    # ------------------------------------------------------------------
+    _TORCH_TO_ONNX_DT = {
+        torch.float32: TensorProto.FLOAT,
+        torch.float16: TensorProto.FLOAT16,
+        torch.bfloat16: TensorProto.BFLOAT16,
+    }
+
+    def _bytes_for(p: torch.Tensor) -> Optional[bytes]:
+        """Raw bytes of a 2D torch tensor in its native dtype.
+
+        bf16 has no numpy dtype; reinterpret as uint16 first, which
+        matches ONNX's raw_data layout for BFLOAT16 initializers.
+        """
+        p_cpu = p.detach().cpu().contiguous()
+        if p_cpu.dtype == torch.bfloat16:
+            return p_cpu.view(torch.uint16).numpy().tobytes()
+        if p_cpu.dtype in (torch.float16, torch.float32):
+            return p_cpu.numpy().tobytes()
+        return None
+
+    # key: (onnx_dtype_enum, shape_tuple, sha256_digest) -> (canonical FQN,
+    # transposed_flag). The transposed flag captures whether the ONNX
+    # initializer (when this key matches) stored the weight in
+    # ``[in_dim, out_dim]`` (ONNX MatMul convention) vs ``[out_dim, in_dim]``
+    # (torch nn.Linear convention). The rename pass records this per
+    # renamed FQN in a sidecar manifest so the runtime LoRA refit can
+    # write deltas in the orientation TRT actually stored — dynamo's
+    # MatMul keeps the transposed layout, torchscript's Gemm keeps torch.
+    torch_hash_index: dict[tuple, tuple[str, bool]] = {}
+    for name, p in decoder.named_parameters():
+        if p.dim() != 2:
+            continue
+        canon = "decoder." + name.replace(".inner.weight", ".weight")
+        onnx_dt = _TORCH_TO_ONNX_DT.get(p.dtype)
+        if onnx_dt is None:
+            continue
+        # Original orientation [out, in] — matches torch nn.Linear.
+        b_orig = _bytes_for(p)
+        if b_orig is None:
+            continue
+        shape_orig = tuple(p.shape)
+        torch_hash_index.setdefault(
+            (onnx_dt, shape_orig, _sha(b_orig)), (canon, False),
+        )
+        # Transposed orientation [in, out] — matches ONNX MatMul layout.
+        p_t = p.transpose(0, 1)
+        b_trans = _bytes_for(p_t)
+        if b_trans is not None:
+            shape_trans = (shape_orig[1], shape_orig[0])
+            torch_hash_index.setdefault(
+                (onnx_dt, shape_trans, _sha(b_trans)), (canon, True),
+            )
+
+    def _read_external_bytes(init) -> Optional[bytes]:
+        """Pull raw bytes for one initializer from its external_data file.
+
+        Returns None for non-external initializers (no external_data
+        records). Caller falls back to ``init.raw_data`` for those.
+        """
+        loc = None
+        offset = 0
+        length: Optional[int] = None
+        for ed in init.external_data:
+            if ed.key == "location":
+                loc = ed.value
+            elif ed.key == "offset":
+                offset = int(ed.value)
+            elif ed.key == "length":
+                length = int(ed.value)
+        if loc is None:
+            return None
+        ext_path = base_dir / loc
+        with open(ext_path, "rb") as f:
+            f.seek(offset)
+            return f.read(length) if length is not None else f.read()
+
+    used_names: set[str] = {init.name for init in model.graph.initializer}
+    renamed = 0
+    skipped_no_match = 0
+    skipped_already_claimed = 0
+    val_seen = 0
+    val_inits_changed: dict[str, str] = {}
+    # Per-FQN orientation: True if ONNX stored the matched weight in
+    # ``[in_dim, out_dim]`` (transposed relative to torch nn.Linear),
+    # which is what dynamo's MatMul writer does. False means orig
+    # ``[out_dim, in_dim]`` (torchscript Gemm convention).
+    transposed_fqns: list[str] = []
+    claimed_torch: set[str] = set()
+    float_dtypes = (TensorProto.BFLOAT16, TensorProto.FLOAT16, TensorProto.FLOAT)
+
+    for init in model.graph.initializer:
+        if not init.name.startswith("val_"):
+            continue
+        val_seen += 1
+        dims = tuple(init.dims)
+        if len(dims) != 2:
+            continue
+        nelem = int(np.prod(dims))
+        if nelem < 16:
+            continue
+        if init.data_type not in float_dtypes:
+            continue
+
+        raw = _read_external_bytes(init)
+        if raw is None:
+            # Inline raw_data on a small init; bytes are already in proto.
+            raw = bytes(init.raw_data) if init.raw_data else None
+        if raw is None:
+            continue
+
+        expected_bytes = nelem * (4 if init.data_type == TensorProto.FLOAT else 2)
+        if len(raw) != expected_bytes:
+            skipped_no_match += 1
+            continue
+
+        key = (init.data_type, dims, _sha(raw))
+        result = torch_hash_index.get(key)
+        if result is None:
+            skipped_no_match += 1
+            continue
+        canon, is_transposed = result
+        if canon in claimed_torch or canon in used_names:
+            skipped_already_claimed += 1
+            continue
+        val_inits_changed[init.name] = canon
+        claimed_torch.add(canon)
+        used_names.add(canon)
+        if is_transposed:
+            transposed_fqns.append(canon)
+        renamed += 1
+
+    # Apply the rename map. Touch initializer names and every node input
+    # that referenced the old SSA name. Do NOT rewrite node.output[i]:
+    # an initializer name is not a node output, and a blind rewrite
+    # there could mutate an unrelated value if dynamo ever reused a
+    # ``val_*`` name across the initializer pool and an intermediate
+    # value pool.
+    for init in model.graph.initializer:
+        if init.name in val_inits_changed:
+            init.name = val_inits_changed[init.name]
+    for node in model.graph.node:
+        for i, ref in enumerate(node.input):
+            if ref in val_inits_changed:
+                node.input[i] = val_inits_changed[ref]
+    # Some dynamo-exported graphs also declare initializers as graph
+    # value_info / graph.input entries (typed shape decls). Keep those
+    # in sync with the rename.
+    for vi in list(model.graph.input) + list(model.graph.value_info):
+        if vi.name in val_inits_changed:
+            vi.name = val_inits_changed[vi.name]
+
+    # Save proto only — external-data files keep their original bytes.
+    # We deliberately do NOT pass save_as_external_data here: that would
+    # rebuild the .data file from raw_data fields (which are empty for
+    # external initializers in our in-memory model anyway), and onnx's
+    # writer has been observed to drift the per-initializer data_type
+    # for this graph during the round trip. Proto-only save preserves
+    # every external_data reference verbatim.
+    onnx.save(model, str(onnx_path))
+
+    # Emit the refit manifest next to the ONNX. TRTLoRAManager reads this
+    # at runtime so it can transpose deltas before writing them into the
+    # engine slot, which dynamo's MatMul builder stored in the transposed
+    # ``[in_dim, out_dim]`` layout (vs torch nn.Linear's ``[out, in]``).
+    import json
+    manifest = {
+        "version": 1,
+        "onnx_path": str(onnx_path.name),
+        "weights_transposed": sorted(transposed_fqns),
+    }
+    manifest_path = onnx_path.with_suffix(onnx_path.suffix + ".refit_manifest.json")
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    logger.info(
+        "ONNX val_* rename (proto-only, byte-hash): {} renamed, {} no_match, "
+        "{} already_claimed (val_total={}). {} weights are transposed-layout "
+        "(manifest: {}).",
+        renamed, skipped_no_match, skipped_already_claimed, val_seen,
+        len(transposed_fqns), manifest_path.name,
+    )
+    return renamed
 
 
 def patch_decoder_onnx_dynamic_batch_reshapes(

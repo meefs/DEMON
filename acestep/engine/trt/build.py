@@ -899,6 +899,20 @@ def _build_decoder_engine(
     t0 = time.time()
     build_trt_engine(onnx_paths[onnx_key], engine_path, config=config)
     _write_metadata(engine_path=engine_path, expected=expected_metadata, env=env)
+    # Copy the refit orientation manifest from the ONNX export next to the
+    # engine so TRTLoRAManager can find it at runtime. The manifest tells
+    # the runtime which renamed weights are stored in the engine slot in
+    # ``[in_dim, out_dim]`` orientation (dynamo's MatMul layout) so the
+    # LoRA delta gets transposed before refit. Absent for non-refit and
+    # for the legacy torchscript path (which stored torch-orientation
+    # natively, no transpose needed).
+    onnx_manifest = Path(str(onnx_paths[onnx_key]) + ".refit_manifest.json")
+    if onnx_manifest.is_file():
+        engine_manifest = Path(str(engine_path) + ".refit_manifest.json")
+        engine_manifest.write_text(
+            onnx_manifest.read_text(encoding="utf-8"), encoding="utf-8",
+        )
+        logger.info("Copied refit manifest to {}", engine_manifest)
     elapsed = time.time() - t0
     logger.info("Built in {:.0f}s", elapsed)
 
