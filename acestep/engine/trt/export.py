@@ -914,12 +914,35 @@ def patch_decoder_onnx_dynamic_batch_reshapes(
             "Dynamic-batch patched ONNX must live next to the source ONNX "
             "so relative external_data references continue to resolve."
         )
+
+    def _carry_refit_manifest() -> None:
+        """Mirror the source's LoRA refit manifest next to the patched ONNX.
+
+        Always runs (both cache-hit and rebuild branches) so the engine
+        builder can find the manifest sidecar regardless of whether the
+        dynbatch patch ran this invocation.
+        """
+        src_manifest = Path(str(onnx_path) + ".refit_manifest.json")
+        if not src_manifest.is_file():
+            return
+        dst_manifest = Path(str(output_path) + ".refit_manifest.json")
+        if (
+            dst_manifest.is_file()
+            and dst_manifest.stat().st_mtime >= src_manifest.stat().st_mtime
+        ):
+            return
+        dst_manifest.write_text(
+            src_manifest.read_text(encoding="utf-8"), encoding="utf-8",
+        )
+        logger.info("Carried refit manifest forward: {}", dst_manifest.name)
+
     if (
         output_path.exists()
         and not force
         and output_path.stat().st_mtime >= onnx_path.stat().st_mtime
     ):
         logger.info("Reusing dynamic-batch patched decoder ONNX: {}", output_path)
+        _carry_refit_manifest()
         return output_path
 
     logger.info(
@@ -981,6 +1004,7 @@ def patch_decoder_onnx_dynamic_batch_reshapes(
     )
     for node_name, shape_name, shape in examples:
         logger.info("  Reshape {} const {}: {}", node_name, shape_name, shape)
+    _carry_refit_manifest()
     return output_path
 
 

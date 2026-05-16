@@ -456,6 +456,82 @@ def patch_bf16_onnx_to_fp8(
             "(external_data references are relative paths)."
         )
 
+    # Populated during the W8A8 pass below; we close over them in
+    # _carry_refit_manifest so the enriched manifest gets the right
+    # activation scales whether we ran the patch this invocation or
+    # short-circuited on cache hit.
+    activation_scales_for_manifest: list[dict] = []
+    weight_scales_for_manifest: list[dict] = []
+
+    def _carry_refit_manifest() -> None:
+        """Mirror the source's LoRA refit manifest next to the FP8 ONNX.
+
+        Always runs (both cache-hit and rebuild branches). The FP8 patch
+        preserves weight initializer names verbatim, so the orientation
+        map from the source bf16 manifest applies directly to the
+        patched ONNX. Distinct from the FP8-build manifest written at
+        the tail of this function: that one records the FP8 quant
+        config; this one tells TRTLoRAManager which renamed weights
+        live in dynamo's [in, out] layout so deltas get transposed
+        before refit.
+
+        For FP8 W8A8 builds we also enrich the carried manifest with an
+        ``fp8`` block. TRT's IRefitter considers FP8 scale initializers
+        "missing" any time we touch a LoRA-target weight (because the
+        FP8 weight + scale + activation Q-DQ scale are fused into a
+        single MatMul tactic), but get_named_weights can't read them
+        back from the engine. Persisting them through the manifest is
+        the only sourceable origin TRTLoRAManager has.
+        """
+        src_manifest = Path(str(src) + ".refit_manifest.json")
+        if not src_manifest.is_file():
+            return
+        dst_manifest = Path(str(output_path) + ".refit_manifest.json")
+
+        # Always rebase on the source (picks up any updates to
+        # ``weights_transposed`` from the bf16 side).
+        manifest = json.loads(src_manifest.read_text(encoding="utf-8"))
+
+        if activation_scales_for_manifest or weight_scales_for_manifest:
+            # Fresh enrichment from this run.
+            manifest["version"] = max(manifest.get("version", 1), 2)
+            manifest["fp8"] = {
+                "activation_scales": activation_scales_for_manifest,
+                # Weight scales are recomputable from base; just persist
+                # the names so the runtime knows which to derive.
+                "weight_scale_names": weight_scales_for_manifest,
+            }
+            log_tag = (
+                f"fresh fp8: {len(activation_scales_for_manifest)} act, "
+                f"{len(weight_scales_for_manifest)} weight"
+            )
+        elif dst_manifest.is_file():
+            # Cache hit — preserve enrichment from a prior run.
+            try:
+                prior = json.loads(dst_manifest.read_text(encoding="utf-8"))
+                if "fp8" in prior:
+                    manifest["version"] = max(manifest.get("version", 1), 2)
+                    manifest["fp8"] = prior["fp8"]
+                    log_tag = (
+                        f"preserved fp8: {len(prior['fp8'].get('activation_scales', []))}"
+                        f" act, {len(prior['fp8'].get('weight_scale_names', []))} weight"
+                    )
+                else:
+                    log_tag = "no fp8 enrichment available"
+            except Exception:
+                log_tag = "no fp8 enrichment available"
+        else:
+            log_tag = "no fp8 enrichment available"
+
+        dst_manifest.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        logger.info(
+            "Carried refit manifest forward: {} ({})",
+            dst_manifest.name, log_tag,
+        )
+
     # Build a name->output_absmax map keyed by (transposed_shape, L2)
     # for the attention quantization path. Populated from the same JSON
     # as activation_lookup (each Linear record has output_absmax).
@@ -499,6 +575,7 @@ def patch_bf16_onnx_to_fp8(
             and output_path.stat().st_mtime >= amax_path.stat().st_mtime
         ):
             logger.info("Reusing FP8 ONNX (newer than source + absmax JSON): {}", output_path)
+            _carry_refit_manifest()
             return output_path
     else:
         if (
@@ -507,6 +584,7 @@ def patch_bf16_onnx_to_fp8(
             and output_path.stat().st_mtime >= src.stat().st_mtime
         ):
             logger.info("Reusing FP8 ONNX (newer than source): {}", output_path)
+            _carry_refit_manifest()
             return output_path
 
     if calibration_npz_path:
@@ -727,6 +805,14 @@ def patch_bf16_onnx_to_fp8(
         zp_init = _make_fp8_zero_point_initializer(zp_name)
         new_inits.append(scale_init)
         new_inits.append(zp_init)
+        # Persist (weight_name, scale_init) so the LoRA refit manifest
+        # can tell TRTLoRAManager to recompute this scale from base at
+        # construction time (saves us from embedding the full per-channel
+        # vector in the JSON).
+        weight_scales_for_manifest.append({
+            "weight": weight_name,
+            "scale_init": scale_name,
+        })
 
         # Build the DequantizeLinear node and rewire every consumer.
         dq_out_name = f"{weight_name}_fp8_dq"
@@ -843,6 +929,17 @@ def patch_bf16_onnx_to_fp8(
                 "consumer_count": len(bucket["consumers"]),
                 "consumers": bucket["consumers"],
                 "linear_paths": bucket["linear_paths"],
+            })
+            # Persist the per-tensor activation scale for the LoRA refit
+            # manifest. These scalar bf16 initializers get fused with
+            # consumer MatMul tactics, which makes them unreadable via
+            # IRefitter::get_named_weights post-deserialize — but TRT
+            # demands them re-submitted whenever any LoRA-target weight
+            # is touched. Persisting (name, value) is the only origin
+            # the runtime has.
+            activation_scales_for_manifest.append({
+                "scale_init": scale_name,
+                "scale": scale_val,
             })
 
         if unmatched_in_lookup:
@@ -1147,6 +1244,8 @@ def patch_bf16_onnx_to_fp8(
         attention_softmax_max=attention_softmax_max if quantize_attention else None,
         attention_generic_max=attention_generic_max if quantize_attention else None,
     )
+
+    _carry_refit_manifest()
 
     return output_path
 

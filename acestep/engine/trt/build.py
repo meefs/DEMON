@@ -235,12 +235,21 @@ def _resolve_decoder_precision(
 
     ``decoder_mixed`` preserves the legacy 2B behavior: when callers ask
     for the old mixed path, ``auto`` maps to the fp16 mixed export recipe.
-    XL checkpoints need bf16 range, so their ``auto`` default is bf16_mixed.
+
+    XL ``auto`` resolves to ``fp8_mixed`` (W8A8). This is the production
+    target for the XL turbo decoder: bf16 is too slow for XL to be useful
+    in real-time streaming, so the canonical engine names in
+    ``acestep.paths`` (``decoder_xl-turbo_fp8_refit_b4_*``) are FP8. To
+    actually get W8A8 (vs the silent W8A16 fallback) the build must also
+    receive ``--activation-absmax-json`` pointing at a calibration JSON
+    from ``scripts/collect_activation_absmax.py``; without it the FP8
+    patch runs weight-only, which leaves the GEMM in bf16 with a free
+    dequant and gives back the latency the FP8 build was supposed to win.
     """
     if requested != "auto":
         return requested
     if _looks_like_xl_checkpoint(checkpoint):
-        return "bf16_mixed"
+        return "fp8_mixed"
     if decoder_mixed:
         return "fp16_mixed"
     return "fp32"
@@ -316,6 +325,7 @@ def _patch_decoder_onnx_for_fp8(
     calibration_npz: str,
     activation_absmax_json: str | None,
     activation_percentile: str,
+    activation_outlier_skip_ratio: float,
     smoothquant_alpha: float,
     force: bool,
 ) -> dict[str, str]:
@@ -359,6 +369,7 @@ def _patch_decoder_onnx_for_fp8(
                 calibration_npz_path=cal_path,
                 activation_absmax_json_path=amax_path,
                 activation_percentile=activation_percentile,
+                activation_outlier_skip_ratio=activation_outlier_skip_ratio,
                 smoothquant_alpha=smoothquant_alpha,
                 force=force,
             )
@@ -1133,6 +1144,11 @@ def main():
                      default="absmax",
                      help="Which activation amax field drives the FP8 scale "
                           "(default: absmax).")
+    fp8.add_argument("--activation-outlier-skip-ratio", type=float, default=0.0,
+                     help="When > 0, Linears whose absmax/p99_9 ratio exceeds "
+                          "this threshold skip activation Q-DQ and stay on the "
+                          "W8A16 path (bf16 act x FP8 weight DQ). 4.0 is a "
+                          "reasonable default for outlier-heavy DiT layers.")
     fp8.add_argument("--smoothquant-alpha", type=float, default=0.0,
                      help="SmoothQuant migration strength (0.0 = off, 0.5 = "
                           "standard).")
@@ -1232,6 +1248,7 @@ def _run_all(args, project_root, onnx_dir, env):
             calibration_npz=args.calibration_npz,
             activation_absmax_json=args.activation_absmax_json,
             activation_percentile=args.activation_percentile,
+            activation_outlier_skip_ratio=args.activation_outlier_skip_ratio,
             smoothquant_alpha=args.smoothquant_alpha,
             force=args.force_onnx,
         )
@@ -1351,6 +1368,7 @@ def _run_single(args, project_root, onnx_dir, env):
         calibration_npz=args.calibration_npz,
         activation_absmax_json=args.activation_absmax_json,
         activation_percentile=args.activation_percentile,
+        activation_outlier_skip_ratio=args.activation_outlier_skip_ratio,
         smoothquant_alpha=args.smoothquant_alpha,
         force=args.force_onnx,
     )

@@ -742,9 +742,17 @@ class StreamPipeline:
         self._trt_stream.synchronize()
 
         out = self._trt_out_buf
-        if pad:
-            return out[:, :T, :].to(self._dtype)
-        return out.to(self._dtype)
+        velocity = out[:, :T, :].to(self._dtype) if pad else out.to(self._dtype)
+
+        if getattr(self.engine, "_debug_dump_dir", None) is not None:
+            ts = torch.tensor(
+                timestep_list, device=xt_batch.device, dtype=xt_batch.dtype,
+            )
+            self.engine._dump_decoder_step(
+                xt_batch, ts, enc_batch, ctx_batch, velocity,
+            )
+
+        return velocity
 
     # ------------------------------------------------------------------
     # TRT buffer management
