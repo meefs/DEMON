@@ -100,6 +100,14 @@ export class RemoteBackend extends EventTarget {
    *  ``base_model_scale`` doesn't match. Null = unknown checkpoint;
    *  the UI treats that as "don't filter". */
   checkpointScale: string | null = null;
+  /** Current StreamPipeline ring-buffer depth, mirrored from the
+   *  server. Set from the ``ready`` message and from ``depth_applied``
+   *  acks after a successful runtime retune. */
+  pipelineDepth: number | null = null;
+  /** Largest depth the server's loaded backend can serve. TRT decoders
+   *  report their hidden_states batch_max; eager / compile pin to 4.
+   *  Null until ready. */
+  maxPipelineDepth: number | null = null;
 
   private _pending: PendingPayload | null;
   private _pendingSwap: SwapReadyMessage | null = null;
@@ -224,12 +232,23 @@ export class RemoteBackend extends EventTarget {
             this.detectedTimeSignature = msg.time_signature ?? null;
             this.checkpoint = msg.checkpoint ?? null;
             this.checkpointScale = msg.checkpoint_scale ?? null;
-            // Push the scale into the session store so the LoRA library
-            // can filter incompatibles immediately, without subscribing
+            this.pipelineDepth =
+              typeof msg.pipeline_depth === "number"
+                ? msg.pipeline_depth
+                : null;
+            this.maxPipelineDepth =
+              typeof msg.max_pipeline_depth === "number"
+                ? msg.max_pipeline_depth
+                : null;
+            // Push the scale + depth bounds into the session store so the
+            // LoRA library / engine controls can render without subscribing
             // to RemoteBackend instance fields.
-            useSessionStore
-              .getState()
-              .setCheckpointScale(this.checkpointScale);
+            {
+              const s = useSessionStore.getState();
+              s.setCheckpointScale(this.checkpointScale);
+              s.setPipelineDepth(this.pipelineDepth);
+              s.setMaxPipelineDepth(this.maxPipelineDepth);
+            }
             phase = "initial-buffer";
           } catch (e) {
             reject(e);
@@ -336,6 +355,15 @@ export class RemoteBackend extends EventTarget {
             this.dispatchEvent(
               new CustomEvent("structure_failed", { detail: msg.error }),
             );
+          } else if (msg.type === "depth_applied") {
+            const v = typeof msg.value === "number" ? msg.value : null;
+            if (v !== null) {
+              this.pipelineDepth = v;
+              useSessionStore.getState().setPipelineDepth(v);
+              this.dispatchEvent(
+                new CustomEvent("depth_applied", { detail: v }),
+              );
+            }
           } else {
             this.dispatchEvent(new CustomEvent("json", { detail: msg }));
           }
@@ -502,6 +530,24 @@ export class RemoteBackend extends EventTarget {
       this.ws.send(JSON.stringify({
         type: "set_prompt_blend",
         value: Math.max(0, Math.min(1, value)),
+      }));
+    } catch {}
+  }
+
+  /**
+   * Live pipeline_depth retune. The server stages the value and applies
+   * it on the next runner-thread before_tick rendezvous, then echoes
+   * the (clamped) result back as ``depth_applied``. Shrinking discards
+   * in-flight slots beyond the new depth; growing extends with empty
+   * slots that warm up over the next ``newDepth - oldDepth`` ticks.
+   */
+  sendSetDepth(value: number): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    if (!Number.isFinite(value)) return;
+    try {
+      this.ws.send(JSON.stringify({
+        type: "set_depth",
+        value: Math.round(value),
       }));
     } catch {}
   }

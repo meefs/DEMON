@@ -1,6 +1,7 @@
 "use client";
 
 import { usePerformanceStore } from "@/store/usePerformanceStore";
+import { useSessionStore } from "@/store/useSessionStore";
 import { RCFG_MODES, type RcfgMode } from "@/types/engine";
 
 import { SliderGroup } from "./SliderGroup";
@@ -26,6 +27,17 @@ const ALWAYS_SLIDERS = [
 export function EngineTile() {
   const rcfgMode = usePerformanceStore((s) => s.rcfgMode);
   const setRcfgMode = usePerformanceStore((s) => s.setRcfgMode);
+  const pipelineDepth = useSessionStore((s) => s.pipelineDepth);
+  const maxPipelineDepth = useSessionStore((s) => s.maxPipelineDepth);
+  const remote = useSessionStore((s) => s.remote);
+
+  const depthEnabled =
+    remote !== null && maxPipelineDepth !== null && maxPipelineDepth >= 1;
+  const depthOptions = depthEnabled
+    ? Array.from({ length: maxPipelineDepth! }, (_, i) => i + 1)
+    : [];
+  const depthValue =
+    typeof pipelineDepth === "number" ? String(pipelineDepth) : "";
 
   return (
     <div className="mixer-tile" data-tile="engine">
@@ -68,6 +80,28 @@ export function EngineTile() {
             {RCFG_MODES.map((m) => (
               <option key={m} value={m}>
                 {m}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label
+          className="dcw-row"
+          data-dd-tooltip="Pipeline depth — concurrent denoising slots in the StreamDiffusion ring buffer. Low depth = faster param-update latency (best for discrete, snappy changes); high depth = higher throughput / updates per second (best for smooth glides) and better GPU utilization. Capped to the TRT engine's max batch size (or 4 in eager/compile)."
+        >
+          <span className="dcw-row-label">depth</span>
+          <select
+            className="dcw-select"
+            value={depthValue}
+            disabled={!depthEnabled}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              if (!Number.isFinite(v)) return;
+              remote?.sendSetDepth(v);
+            }}
+          >
+            {depthOptions.map((n) => (
+              <option key={n} value={n}>
+                {n}
               </option>
             ))}
           </select>

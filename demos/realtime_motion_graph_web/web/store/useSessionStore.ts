@@ -35,12 +35,21 @@ interface SessionState {
    *  The LoRA library uses this to hide LoRAs whose trained
    *  ``base_model_scale`` doesn't match. */
   checkpointScale: string | null;
+  /** Current StreamPipeline ring-buffer depth (concurrent denoising
+   *  slots). Mirrors the server's view; updated from ``ready`` and
+   *  ``depth_applied`` messages. Null until a session is live. */
+  pipelineDepth: number | null;
+  /** Server-imposed ceiling on ``pipelineDepth`` — TRT engine batch_max
+   *  for TRT decoders, 4 for eager / compile. Null until ready. */
+  maxPipelineDepth: number | null;
 
   setStatus: (status: SessionStatus, message?: string) => void;
   setSession: (remote: RemoteBackend | null, player: AudioPlayer | null) => void;
   setMonitor: (monitor: NetworkMonitor | null) => void;
   setWsUrl: (wsUrl: string | null) => void;
   setCheckpointScale: (scale: string | null) => void;
+  setPipelineDepth: (depth: number | null) => void;
+  setMaxPipelineDepth: (max: number | null) => void;
   reset: () => void;
 }
 
@@ -52,12 +61,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   monitor: null,
   wsUrl: null,
   checkpointScale: null,
+  pipelineDepth: null,
+  maxPipelineDepth: null,
 
   setStatus: (status, message = "") => set({ status, message }),
   setSession: (remote, player) => set({ remote, player }),
   setMonitor: (monitor) => set({ monitor }),
   setWsUrl: (wsUrl) => set({ wsUrl }),
   setCheckpointScale: (scale) => set({ checkpointScale: scale }),
+  setPipelineDepth: (depth) => set({ pipelineDepth: depth }),
+  setMaxPipelineDepth: (max) => set({ maxPipelineDepth: max }),
   reset: () => {
     try {
       get().monitor?.stop();
@@ -68,6 +81,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       remote: null,
       player: null,
       monitor: null,
+      pipelineDepth: null,
+      maxPipelineDepth: null,
       // checkpointScale survives reset on purpose: the server's
       // checkpoint doesn't change across sessions, and pre-fetching
       // it from /api/loras lets the library filter render correctly

@@ -86,6 +86,24 @@ export interface ReadyMessage {
   time_signature?: string | null;
   checkpoint?: string | null;
   checkpoint_scale?: string | null;
+  /** Active StreamPipeline ring-buffer depth (concurrent denoising
+   *  slots). Server clamps the requested ``depth`` to
+   *  [1, max_pipeline_depth] before building the pipeline; the result
+   *  is echoed here so the UI can render the current value without
+   *  guessing. */
+  pipeline_depth?: number;
+  /** Largest depth the loaded backend can serve — TRT engine's
+   *  ``hidden_states`` batch_max for TRT decoders, 4 for eager /
+   *  compile. The client clamps the depth control to
+   *  [1, max_pipeline_depth]. */
+  max_pipeline_depth?: number;
+}
+
+/** Server ack for a ``set_depth`` request. ``value`` is the actually-
+ *  applied depth (clamped to [1, max_pipeline_depth] server-side). */
+export interface DepthAppliedMessage {
+  type: "depth_applied";
+  value: number;
 }
 
 /** Structured init failure from the server. */
@@ -165,6 +183,7 @@ export type ServerJsonMessage =
   | LoraCatalogMessage
   | SwapReadyMessage
   | SwapFailedMessage
+  | DepthAppliedMessage
   | { type: string; [k: string]: unknown };
 
 /** Parsed binary slice from the server. */
