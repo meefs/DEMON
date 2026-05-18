@@ -85,6 +85,15 @@ const tweens = new Map<string, Tween>();
 // keeps the master rAF callback from doing dead work while idle.
 let tweenUnregister: (() => void) | null = null;
 
+// Tween outputs below this snap to 0 (when the target is 0). The
+// cubic ease-out's tail can pass through arbitrarily small positive
+// values in the last few percent of the glide, and the engine's
+// schedule builder used to do `int(steps / denoise)` on whatever it
+// received — a denoise of ~1e-17 lifted from a tween mid-flight made
+// it request a 512-PiB linspace and OOM. Below this floor the slider
+// is effectively zero anyway, so snap it.
+const TWEEN_ZERO_FLOOR = 1e-6;
+
 function tickTweens(now: number): void {
   if (tweens.size === 0) {
     // Defensive: scheduler keeps calling until we unregister, but we
@@ -105,7 +114,11 @@ function tickTweens(now: number): void {
     const k = elapsed / durationMs;
     // Cubic ease-out: snappy start, settles into target.
     const eased = 1 - Math.pow(1 - k, 3);
-    updates[param] = t.start + (target - t.start) * eased;
+    let v = t.start + (target - t.start) * eased;
+    // Snap subnormal-ish positives to 0 when we're tweening down to 0
+    // so the engine never sees a near-zero denoise (see floor comment).
+    if (target === 0 && v > 0 && v < TWEEN_ZERO_FLOOR) v = 0;
+    updates[param] = v;
   }
   if (Object.keys(updates).length > 0) {
     usePerformanceStore.setState((s) => ({

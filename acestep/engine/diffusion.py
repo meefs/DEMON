@@ -641,14 +641,34 @@ class DiffusionEngine:
     # Timestep schedule
     # ------------------------------------------------------------------
 
+    # Treat any positive denoise below this as "no denoise". The last
+    # ``steps + 1`` entries of the truncated schedule for ``denoise <
+    # _DENOISE_MIN`` are indistinguishable from zero at the engine's
+    # working precision (bf16 / fp16 / fp32) — the schedule starts at
+    # ``denoise`` and descends to 0, so anything in this range is
+    # numerical noise. The cap also guards against a UI tween briefly
+    # writing a near-zero positive ``denoise`` mid-glide (e.g. the
+    # "hear source first" gate animating the ribbon down to 0): without
+    # it, ``int(steps / denoise)`` blows up into a 512-PiB ``linspace``
+    # request and OOMs on the first ``_init_slot`` after the swap.
+    _DENOISE_MIN: float = 1e-6
+
     def _build_timestep_schedule(
         self, config: DiffusionConfig, device: torch.device, dtype: torch.dtype
     ) -> torch.Tensor:
         """Build the timestep schedule, respecting denoise truncation.
 
-        When denoise < 1.0, computes int(steps/denoise) full steps with
-        shift applied, then takes the last (steps+1) entries. This matches
-        ComfyUI's BasicScheduler.set_steps() behavior.
+        When ``denoise < 1.0`` the schedule is the last ``steps + 1``
+        entries of ``linspace(1.0, 0.0, int(steps/denoise) + 1)``. We
+        compute those entries directly as
+        ``linspace(steps/full_steps, 0.0, steps + 1)`` instead of
+        materializing the full descending range and slicing — the
+        intermediate is unbounded in ``denoise`` and a near-zero positive
+        ``denoise`` (subnormal-ish floats from a UI tween) used to
+        request a ~512-PiB GPU allocation here. The direct form matches
+        ComfyUI's ``BasicScheduler.set_steps()`` for all valid inputs
+        (``shift`` is elementwise, so applying it after the slice is
+        equivalent to applying it before).
         """
         if config.timesteps is not None:
             return torch.tensor(config.timesteps, device=device, dtype=dtype)
@@ -656,26 +676,24 @@ class DiffusionEngine:
         steps = config.infer_steps
         denoise = config.denoise
 
-        if denoise <= 0.0:
-            # No denoising: single-entry schedule (t=0 -> t=0)
+        if denoise <= self._DENOISE_MIN:
+            # No (meaningful) denoising: single-entry schedule (t=0 -> t=0)
             return torch.zeros(2, device=device, dtype=dtype)
-        elif denoise >= 1.0:
-            full_steps = steps
+
+        if denoise >= 1.0:
+            t_start = 1.0
         else:
-            # Compute extended schedule, then truncate
             full_steps = int(steps / denoise)
+            # full_steps is at most steps / _DENOISE_MIN; well-bounded.
+            t_start = steps / full_steps  # ≈ denoise, exact slice endpoint
 
         t_schedule = torch.linspace(
-            1.0, 0.0, full_steps + 1, device=device, dtype=dtype
+            t_start, 0.0, steps + 1, device=device, dtype=dtype
         )
         if config.shift != 1.0:
             t_schedule = (
                 config.shift * t_schedule
                 / (1 + (config.shift - 1) * t_schedule)
             )
-
-        if denoise < 1.0 and denoise > 0.0:
-            # Take the last (steps+1) entries
-            t_schedule = t_schedule[-(steps + 1):]
 
         return t_schedule
