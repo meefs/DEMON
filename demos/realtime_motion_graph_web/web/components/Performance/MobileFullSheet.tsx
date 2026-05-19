@@ -1,29 +1,36 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-import { ChannelGainsTile } from "./ChannelGainsTile";
-import { ChannelsTile } from "./ChannelsTile";
-import { DcwTile } from "./DcwTile";
-import { EngineTile } from "./EngineTile";
+import { CoreTile } from "./CoreTile";
 import { LibraryTile } from "./LibraryTile";
-import { MainTile } from "./MainTile";
+import { ModTile } from "./ModTile";
 import { OperatorStrip } from "./OperatorStrip";
 import { PromptsTile } from "./PromptsTile";
-import { SeedTile } from "./SeedTile";
+import { VoiceTile } from "./VoiceTile";
 
-type Tab = "mix" | "sound" | "prompts" | "config";
+type Tab = "core" | "mod" | "voice" | "prompt" | "lib" | "saved" | "config";
 
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** Slot for the Saved tab body, passed through from the host (the
+   *  demo passes <SessionsTile/>). Mirrors AdvancedDrawer's savedTab
+   *  prop so the desktop + mobile surfaces share the same component. */
+  savedTab?: ReactNode;
 }
 
+// Mirrors the desktop DrawerTabs IA: CORE / MOD / CHANNELS (key=voice) /
+// PROMPT / LoRAs (key=lib) / SAVED / CONFIG. Labels match the desktop
+// strip after the Wave 12 rename.
 const TABS: { id: Tab; label: string }[] = [
-  { id: "mix", label: "Mix" },
-  { id: "sound", label: "Sound" },
-  { id: "prompts", label: "Prompts" },
+  { id: "core", label: "Core" },
+  { id: "mod", label: "Mod" },
+  { id: "voice", label: "Channels" },
+  { id: "prompt", label: "Prompt" },
+  { id: "lib", label: "LoRAs" },
+  { id: "saved", label: "Saved" },
   { id: "config", label: "Config" },
 ];
 
@@ -34,8 +41,8 @@ const TABS: { id: Tab; label: string }[] = [
 // is the single source of truth — taps scroll into view, the observer
 // updates `tab` from whatever's most visible. That way swipe and tap stay
 // in sync without setState fighting the scroller.
-export function MobileFullSheet({ open, onClose }: Props) {
-  const [tab, setTab] = useState<Tab>("mix");
+export function MobileFullSheet({ open, onClose, savedTab }: Props) {
+  const [tab, setTab] = useState<Tab>("core");
   const [mounted, setMounted] = useState(false);
   const trackRef = useRef<HTMLDivElement | null>(null);
 
@@ -104,19 +111,27 @@ export function MobileFullSheet({ open, onClose }: Props) {
       </header>
 
       <div ref={trackRef} className="mobile-sheet-track">
-        <section data-section="mix" className="mobile-sheet-section">
-          <MainTile />
+        <section data-section="core" className="mobile-sheet-section">
+          <CoreTile />
         </section>
-        <section data-section="sound" className="mobile-sheet-section">
-          <EngineTile />
-          <ChannelsTile />
-          <ChannelGainsTile />
-          <DcwTile />
-          <LibraryTile />
-          <SeedTile />
+        <section data-section="mod" className="mobile-sheet-section">
+          <ModTile />
         </section>
-        <section data-section="prompts" className="mobile-sheet-section">
+        <section data-section="voice" className="mobile-sheet-section">
+          <VoiceTile />
+        </section>
+        <section data-section="prompt" className="mobile-sheet-section">
           <PromptsTile />
+        </section>
+        <section data-section="lib" className="mobile-sheet-section">
+          <LibraryTile />
+        </section>
+        <section data-section="saved" className="mobile-sheet-section">
+          {savedTab ?? (
+            <div className="install-sheet-saved-placeholder">
+              Saved sessions are only available in the hosted app.
+            </div>
+          )}
         </section>
         <section data-section="config" className="mobile-sheet-section">
           <OperatorStrip />
