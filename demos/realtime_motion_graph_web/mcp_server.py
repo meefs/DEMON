@@ -207,6 +207,8 @@ def _build_knob_catalog(sde: bool, enabled_lora_ids: list[str]) -> dict[str, dic
                        "description": "Feedback amount"}
     out["shift"] = {"default": 3.0, "min": 1.0, "max": 6.0, "group": "core",
                     "description": "Flow shift (timing/curve shape). Passed verbatim to the diffusion solver."}
+    out["steps_override"] = {"default": 8, "min": 1, "max": 16, "group": "core",
+                             "description": "Diffusion step count. Lower = lower quality, higher = more latency. Changing rebuilds the StreamPipeline."}
     for lid in enabled_lora_ids:
         out[f"lora_str_{lid}"] = {
             "default": 0.0, "max": 2.0, "group": "core",

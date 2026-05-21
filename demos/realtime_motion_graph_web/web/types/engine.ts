@@ -51,6 +51,13 @@ export const SLIDER_META: Record<string, SliderMeta> = {
   // tame saturation.
   cfg_rescale: { max: 1.0, step: 0.05, pro: true },
 
+  // Diffusion step count for the StreamPipeline. Default 8 (turbo
+  // packaged default). Lower = faster but rougher; higher = smoother
+  // but more latency. Changing this rebuilds the pipeline (steps is in
+  // the rebuild-on-change set on StreamDenoise), so each move glitches
+  // the audio for one ring's worth of ticks.
+  steps_override: { min: 1, max: 16, step: 1, pro: true },
+
   ch_g0: { max: 3.0, step: 0.15, pro: true },
   ch_g1: { max: 3.0, step: 0.15, pro: true },
   ch_g2: { max: 3.0, step: 0.15, pro: true },

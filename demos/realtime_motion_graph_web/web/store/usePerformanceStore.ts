@@ -268,6 +268,7 @@ const DEFAULT_SLIDER_VALUES: Record<string, number> = {
   // uniform [1, T, 1] curves.
   guidance_scale: 7.0,
   cfg_rescale: 0.0,
+  steps_override: 8,
 };
 
 interface PerformanceState {

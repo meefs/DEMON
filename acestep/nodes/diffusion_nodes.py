@@ -479,7 +479,6 @@ class StreamDenoise(BaseNode):
         self._pipeline: Optional[StreamPipeline] = None
         self._engine: Optional[DiffusionEngine] = None
         self._last_handle_id: Optional[int] = None
-        self._shape_key: Optional[tuple] = None
 
     @classmethod
     def get_definition(cls) -> NodeDefinition:
@@ -629,16 +628,33 @@ class StreamDenoise(BaseNode):
 
         Shape-key changes that affect ring-buffer shape or timestep
         schedule semantics force a fresh pipeline. Hot-path parameters
-        (denoise, curves, seed, shift) bypass this entirely — they ride
+        (denoise, curves, seed, shift) bypass this entirely, they ride
         on the per-tick ``SlotRequest``.
+
+        ``pipeline_depth`` is special: ``StreamPipeline.set_depth()``
+        resizes the live ring buffer in place without going through
+        kwargs, so the inbound shape_key's depth slot can be stale
+        relative to the live pipeline. We treat the live pipeline as
+        the source of truth for depth, rewriting that slot before
+        comparison and rebuild. This both suppresses a spurious
+        rebuild after ``set_depth()`` and ensures that a rebuild
+        triggered by another shape_key field (e.g. ``steps``) keeps
+        the operator's live depth instead of reverting it to
+        ``base_kwargs``' initial value.
         """
         handle_id = id(handler)
-        if (
-            self._pipeline is not None
-            and self._last_handle_id == handle_id
-            and self._shape_key == shape_key
-        ):
-            return self._pipeline
+        if self._pipeline is not None and self._last_handle_id == handle_id:
+            cfg = self._pipeline.config
+            live_shape = (
+                cfg.infer_steps,
+                self._pipeline.depth,
+                cfg.noise_on_cpu,
+                cfg.use_cache,
+            )
+            steps, _stale_depth, noise_on_cpu, use_cache = shape_key
+            shape_key = (steps, self._pipeline.depth, noise_on_cpu, use_cache)
+            if live_shape == shape_key:
+                return self._pipeline
 
         if handler._diffusion_engine is None:
             handler._diffusion_engine = DiffusionEngine(
@@ -658,7 +674,6 @@ class StreamDenoise(BaseNode):
             pipeline_depth=depth,
         )
         self._last_handle_id = handle_id
-        self._shape_key = shape_key
         return self._pipeline
 
     def execute(self, **kwargs: Any) -> dict[str, Any]:

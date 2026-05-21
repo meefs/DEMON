@@ -73,6 +73,11 @@ export function ModTile() {
               label={defaultLabelFor("feedback_depth")}
               kbd={kbdHintFor("feedback_depth")}
             />
+            <Knob
+              param="steps_override"
+              label="steps"
+              kbd={kbdHintFor("steps_override")}
+            />
           </div>
           <label
             className="dcw-row"

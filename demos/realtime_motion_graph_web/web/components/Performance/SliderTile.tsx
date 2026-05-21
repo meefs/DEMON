@@ -52,6 +52,8 @@ const PARAM_TOOLTIPS: Record<string, string> = {
     "How far back in time the Feedback knob reaches. 1 (default) blends with the most recent generation. Higher values reach back several ticks for an echo / ghost effect — a faint repeat of an earlier moment surfaces in the current output. Lets you get distant feedback without cranking Feedback all the way up.",
   shift:
     "Advanced: changes where the model concentrates its work across denoising. The default is tuned for the turbo engine and works well in most cases — leave it alone unless you're chasing a specific feel.",
+  steps_override:
+    "Diffusion step count. Lower steps = lower quality. Higher steps = more latency. Default 8 is the turbo balance. Changing this rebuilds the streaming pipeline, so expect a brief audio glitch when you move it.",
   guidance_scale:
     "CFG strength. Only takes effect when the RCFG mode dropdown below is NOT 'off'. Higher values push the output further toward the prompt at the cost of more artifacts. Turbo is CFG-distilled, so the useful range is narrower than a base SD model — try 3–8.",
   cfg_rescale:

@@ -653,6 +653,7 @@ class PipelineRunner:
             torch.cuda.synchronize()
             t0 = time.perf_counter()
             tick_kwargs = {}
+            tick_kwargs["steps"] = int(raw.get("steps_override", 8))
             if walk_active:
                 # In walk mode the StreamHandle's cached source/context
                 # are the FULL song; the DiT must see the sliced versions
