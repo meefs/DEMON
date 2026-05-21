@@ -39,9 +39,9 @@ export function VoiceTile() {
       </div>
       <div className="voice-sections-row">
         <div className="voice-section">
-          <div className="voice-section-label">Channels</div>
+          <div className="voice-section-label">Highlights</div>
           <div className="mixer-channels">
-            {VOICES.map((p) => {
+            {MORPH.map((p) => {
               const r = ranges[p];
               return (
                 <SliderGroup
@@ -60,9 +60,9 @@ export function VoiceTile() {
         </div>
         <div className="voice-section-divider" aria-hidden="true" />
         <div className="voice-section">
-          <div className="voice-section-label">Channel gains</div>
+          <div className="voice-section-label">Groups</div>
           <div className="mixer-channels">
-            {MORPH.map((p) => {
+            {VOICES.map((p) => {
               const r = ranges[p];
               return (
                 <SliderGroup
