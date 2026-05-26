@@ -44,12 +44,43 @@ from typing import Any, Optional
 
 import numpy as np
 import soundfile as sf
+from loguru import logger
 from mcp.server.fastmcp import FastMCP
 
 
+# MCP wire protocol owns stdout — every log MUST go to stderr. Lazy
+# configure so this module stays importable without a hard dependency on
+# the rest of the engine package's logging config. The backend logs
+# every dispatched command on its end (origin="control"), so this side
+# stays intentionally light.
+_mcp_log = logger.bind(component="mcp")
+_logger_configured = False
+
+
+def _ensure_logger() -> None:
+    # loguru's logger is a process-global singleton. If a co-located
+    # backend (or anything else) already configured sinks, calling
+    # remove() here would wipe them — so only attach our stderr sink
+    # when no handler is already attached. This module is normally a
+    # separate stdio subprocess, but the guard makes a same-process
+    # import safe. ``logger._core.handlers`` is private but stable
+    # across loguru versions; the try/except keeps the guard from
+    # crashing if loguru ever renames it.
+    global _logger_configured
+    if _logger_configured:
+        return
+    try:
+        already_configured = bool(logger._core.handlers)
+    except AttributeError:
+        already_configured = False
+    if not already_configured:
+        logger.add(sys.stderr, level="INFO")
+    _logger_configured = True
+
+
 def _log(*parts: Any) -> None:
-    """Stderr-only logging. stdout belongs to the MCP wire protocol."""
-    print("[demon-mcp]", *parts, file=sys.stderr, flush=True)
+    _ensure_logger()
+    _mcp_log.info(" ".join(str(p) for p in parts))
 
 
 BACKEND_HOST = os.environ.get("DEMON_HOST", "127.0.0.1")
