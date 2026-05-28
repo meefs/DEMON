@@ -4,7 +4,7 @@ GPU backend for the realtime motion-to-music demo.
 Provides :func:`handle_client`, the per-WebSocket coroutine wired in by
 :mod:`.server`. Drives a :class:`~acestep.engine.session.StreamHandle`
 through :class:`.pipeline.PipelineRunner`, with:
-  - VirtualMidiKnobs fed by WebSocket params from the client
+  - KnobState fed by WebSocket params from the client
   - on_audio_ready callback that sends slices back over WebSocket
   - Catalog-driven LoRA library (MODELS_DIR/loras): client toggles
     individual entries on/off via WebSocket messages instead of the
@@ -50,7 +50,7 @@ from acestep.paths import (
 )
 
 from acestep.streaming.audio_engine import AudioEngine
-from acestep.streaming.knobs import build_banks, CHANNEL_GROUPS, KEYSTONE_CHANNELS
+from acestep.streaming.knobs import KnobState, build_banks, CHANNEL_GROUPS, KEYSTONE_CHANNELS
 from acestep.streaming.stems import (
     extract_upload_stems,
     normalize_stem_source_mode,
@@ -73,6 +73,7 @@ from acestep.streaming.source import (
     _try_load_sidecar,
 )
 from acestep.streaming.encode import blend_for_strength, encode_cond_pair
+from acestep.streaming.state import SessionState
 
 
 def _send_stem_payload(
@@ -138,76 +139,6 @@ def _extract_and_select_upload_stem(
             log_context or None, exc,
         )
         return None, str(exc), source, waveform
-
-
-# ---------------------------------------------------------------------------
-# Virtual MIDI knobs (same interface as MidiKnobs)
-# ---------------------------------------------------------------------------
-
-class VirtualMidiKnobs:
-    """Drop-in replacement for MidiKnobs.  Values come from the WebSocket
-    client instead of a physical MIDI controller."""
-
-    def __init__(self, banks):
-        self._banks = banks
-        self._active_bank = 0
-        self._values = {}
-        self._all_knobs = {}
-        for bank in banks:
-            for name, k in bank.knobs.items():
-                if name not in self._values:
-                    self._values[name] = k.default
-                self._all_knobs[name] = k
-        self._lock = threading.Lock()
-
-    def update(self, raw: dict):
-        """Bulk-update values from a client raw dict."""
-        with self._lock:
-            self._values.update(raw)
-
-    def add_knob(self, name, knob_def):
-        """Register a new knob after construction (used when the client
-        enables a LoRA at runtime and we need a ``lora_str_<id>`` slot)."""
-        with self._lock:
-            if name not in self._values:
-                self._values[name] = knob_def.default
-            self._all_knobs[name] = knob_def
-
-    def remove_knob(self, name):
-        with self._lock:
-            self._values.pop(name, None)
-            self._all_knobs.pop(name, None)
-
-    def get(self, name: str) -> float:
-        with self._lock:
-            return self._values.get(name, 0.0)
-
-    def get_all(self) -> dict:
-        with self._lock:
-            bank = self._banks[self._active_bank]
-            return {name: self._values[name] for name in bank.knobs}
-
-    def get_all_values(self) -> dict:
-        with self._lock:
-            return dict(self._values)
-
-    def get_param(self, name: str) -> float:
-        with self._lock:
-            return self._values.get(name, 0.0)
-
-    def all_knob_defs(self) -> dict:
-        return dict(self._all_knobs)
-
-    @property
-    def active_bank_index(self) -> int:
-        return self._active_bank
-
-    @property
-    def active_bank(self):
-        return self._banks[self._active_bank]
-
-    def release(self):
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -713,7 +644,7 @@ def _handle_client_body(
     # cond_silence uses the model's silence latent (refer_latent=None);
     # cond_full uses whichever timbre reference is currently active —
     # the playback source's own latent by default, or an uploaded
-    # timbre-track latent when timbre_latent_ref[0] is set. Live alpha-
+    # timbre-track latent when state.timbre_latent is set. Live alpha-
     # blend between them via ConditioningBlend (encoder hidden-state
     # lerp) gives the operator a strength knob without paying an encoder
     # forward pass per slider tick. Same approximation already used for
@@ -876,58 +807,37 @@ def _handle_client_body(
 
     # ---- Phase 2: Streaming ----
 
-    running = [True]
     send_lock = threading.Lock()
     k1_name = "sde_amp" if use_sde else "denoise"
     initial_knob_ids = list(initial_enable_ids) if use_lora else []
     banks = build_banks(use_sde, loras=initial_knob_ids)
-    virtual_knobs = VirtualMidiKnobs(banks)
-    params = {"num_gens": 0, "tick_ms": 0.0, "dec_ms": 0.0}
-    prompt_text = [prompt]
-    sde_curve_display = [None]
-    motion_val = [0.0]
-    motion_lock = threading.Lock()
+    virtual_knobs = KnobState(banks)
 
-    # Mutable refs so the swap path can replace these in place from the
-    # runner thread without invalidating closures captured by recv_loop /
-    # on_audio_ready. Values are read via the [0] indirection everywhere
-    # that needs the *current* (post-swap) version.
-    source_ref = [source]
-    bpm_ref = [detected_bpm]
-    key_ref = [detected_key]
-    # Tracks the time signature actively baked into the latest cond_pair.
-    # Mirrors ``key_ref`` exactly: refreshed on prompt re-encode (operator
-    # override), on swap_source (next track's sidecar / override), and
-    # consulted by every encode_text call so timbre / structure refits
-    # honour the current meter.
-    time_sig_ref = [detected_time_signature]
-    duration_ref = [audio_duration_s]
-    n_channels_ref = [n_channels]
-    # Live timbre strength: 1.0 == cond_full (full timbre reference);
-    # 0.0 == cond_silence (model uses its silence baseline).
-    # cond_pair_ref holds (cond_silence, cond_full) for the *current*
-    # source + prompt + timbre-override; refreshed on prompt change,
-    # swap_source, and set/clear_timbre_source.
-    timbre_strength_ref = [1.0]
-    cond_pair_ref = [(cond_silence, cond_full)]
-    # Prompt A/B blend. B is encoded at session start from config.prompt_b
-    # (falls back to A when missing/equal, in which case the slider is a
-    # no-op until the operator edits B and hits Send Tags). The pair is
-    # encoded against the same source + timbre as A, and set_prompt_blend
-    # lerps between them per tick.
-    cond_pair_b_ref = [(cond_silence_b, cond_full_b)]
-    prompt_text_b = [prompt_b]
-    prompt_blend_ref = [0.0]
-    # Optional uploaded timbre-track latent. None == use the playback
-    # source's own latent (self-timbre, current default).
-    timbre_latent_ref: list = [None]
-    # Display name for the active timbre track (sent back in acks so the
-    # client can show it). None when no override is active.
-    timbre_name_ref: list = [None]
+    # Single mutable session state object (Phase 2 of the API-layer
+    # excision). Replaces the ~25 ``*_ref = [...]`` cells the
+    # dispatcher and runner used to share via ad-hoc closure capture.
+    # See acestep/streaming/state.py. Cross-thread mutations of
+    # ``state.pending_*`` and ``state.state.swap_pending`` take ``state._lock``;
+    # single-field reads/writes rely on GIL atomicity (same contract as
+    # the old ``ref[0]`` cells).
+    state = SessionState(
+        source=source,
+        bpm=detected_bpm,
+        key=detected_key,
+        time_signature=detected_time_signature,
+        duration=audio_duration_s,
+        n_channels=n_channels,
+        playback_samples=int(waveform.shape[-1]),
+        cond_pair=(cond_silence, cond_full),
+        cond_pair_b=(cond_silence_b, cond_full_b),
+        prompt_text=prompt,
+        prompt_text_b=prompt_b,
+        current_depth=int(depth),
+    )
 
     def _active_refer_latent():
-        tl = timbre_latent_ref[0]
-        return tl if tl is not None else source_ref[0].latent
+        tl = state.timbre_latent
+        return tl if tl is not None else state.source.latent
 
     def _refresh_conditioning():
         """Recompose ``stream.conditioning`` from the cached A/B pairs,
@@ -935,40 +845,37 @@ def _handle_client_body(
         when blend is in the open interval; one when it's at an extreme
         (``_blend_for_strength``'s own short-circuit handles that).
         Called from every site that changes any of those inputs."""
-        cs_a, cf_a = cond_pair_ref[0]
-        ca = _blend_for_strength(cs_a, cf_a, timbre_strength_ref[0])
-        pb = prompt_blend_ref[0]
+        cs_a, cf_a = state.cond_pair
+        ca = _blend_for_strength(cs_a, cf_a, state.timbre_strength)
+        pb = state.prompt_blend
         if pb <= 0.001:
             stream.conditioning = ca
             return
-        cs_b, cf_b = cond_pair_b_ref[0]
-        cb = _blend_for_strength(cs_b, cf_b, timbre_strength_ref[0])
+        cs_b, cf_b = state.cond_pair_b
+        cb = _blend_for_strength(cs_b, cf_b, state.timbre_strength)
         if pb >= 0.999:
             stream.conditioning = cb
             return
         stream.conditioning = _blend_for_strength(ca, cb, pb)
 
-    # Structure (semantic-hint) override. Holds the raw user waveform so
-    # we can re-derive the override's context_latent against the current
-    # playback source length on every swap_source — the runner's
-    # _update_hint_strength does LatentBlend(silence, context_latent)
-    # at sample time and silence is sized to the source's frame count,
-    # so the override's context_latent must match exactly. We pad-with-
-    # silence or trim to enforce parity.
-    playback_samples_ref = [int(waveform.shape[-1])]
-    struct_audio_ref: list = [None]    # torch.Tensor [C, N], raw user clip
-    struct_context_ref: list = [None]  # computed override context_latent
-    struct_name_ref: list = [None]
+    # Structure (semantic-hint) override (state.struct_audio / state.
+    # struct_context / state.struct_name). Holds the raw user waveform
+    # so we can re-derive the override's context_latent against the
+    # current playback source length on every swap_source — the
+    # runner's _update_hint_strength does LatentBlend(silence,
+    # context_latent) at sample time and silence is sized to the
+    # source's frame count, so the override's context_latent must
+    # match exactly. We pad-with-silence or trim to enforce parity.
 
     def _apply_struct_override():
         """(Re)derive the override's context_latent against the current
         playback source length and replace stream.source with one that
         carries it. No-op when no override is active. Caller is
         responsible for catching exceptions."""
-        if struct_audio_ref[0] is None:
+        if state.struct_audio is None:
             return
-        target = playback_samples_ref[0]
-        wf = struct_audio_ref[0]
+        target = state.playback_samples
+        wf = state.struct_audio
         if wf.shape[-1] > target:
             wf = wf[:, :target]
         elif wf.shape[-1] < target:
@@ -979,31 +886,31 @@ def _handle_client_body(
         # produce. Skips ~500ms of VAE+extract on the recv thread.
         sc = (
             _try_load_sidecar(
-                struct_name_ref[0],
+                state.struct_name,
                 samples=int(wf.shape[-1]),
             )
-            if struct_name_ref[0] else None
+            if state.struct_name else None
         )
         if sc is not None:
             device = session.handler.device
             dtype = session.handler.dtype
-            struct_context_ref[0] = Latent(
+            state.struct_context = Latent(
                 tensor=sc.context_latent.to(device, dtype).contiguous(),
             )
             logger.debug(
                 "structure_override_sidecar_hit name={}",
-                struct_name_ref[0],
+                state.struct_name,
             )
         else:
             audio_in = Audio(waveform=wf, sample_rate=SAMPLE_RATE)
             prepared = session.prepare_source(audio_in)
-            struct_context_ref[0] = prepared.context_latent
-        # source_ref[0] keeps the unmodified playback PreparedSource so
+            state.struct_context = prepared.context_latent
+        # state.source keeps the unmodified playback PreparedSource so
         # clear can restore it as-is. stream.source carries the
         # overridden context_latent for the runner to read.
         stream.source = PreparedSource(
-            latent=source_ref[0].latent,
-            context_latent=struct_context_ref[0],
+            latent=state.source.latent,
+            context_latent=state.struct_context,
         )
         # Force the runner to re-blend on the next tick — the run loop
         # only fires _update_hint_strength on slider deltas, so without
@@ -1014,10 +921,10 @@ def _handle_client_body(
             r.mark_hint_dirty()
 
     def _clear_struct_override():
-        struct_audio_ref[0] = None
-        struct_context_ref[0] = None
-        struct_name_ref[0] = None
-        stream.source = source_ref[0]
+        state.struct_audio = None
+        state.struct_context = None
+        state.struct_name = None
+        stream.source = state.source
         r = runner_holder[0]
         if r is not None:
             r.mark_hint_dirty()
@@ -1052,13 +959,13 @@ def _handle_client_body(
         fast (``set_timbre_fixture``) paths so cache lookup, encode
         fallback, cond-pair refresh, and rollback semantics stay in
         one place."""
-        prev_timbre_latent = timbre_latent_ref[0]
-        prev_timbre_name = timbre_name_ref[0]
-        prev_cond_pair = cond_pair_ref[0]
-        prev_cond_pair_b = cond_pair_b_ref[0]
+        prev_timbre_latent = state.timbre_latent
+        prev_timbre_name = state.timbre_name
+        prev_cond_pair = state.cond_pair
+        prev_cond_pair_b = state.cond_pair_b
         prev_stream_cond = stream.conditioning
         try:
-            cap = int(duration_ref[0] * SAMPLE_RATE)
+            cap = int(state.duration * SAMPLE_RATE)
             t_wf = t_wf[:, :cap]
             rem = t_wf.shape[-1] % pool
             if rem:
@@ -1089,31 +996,31 @@ def _handle_client_body(
                     "timbre_vae_encode_done latent_shape={}",
                     tuple(timbre_latent.tensor.shape),
                 )
-            timbre_latent_ref[0] = timbre_latent
-            timbre_name_ref[0] = name
-            cond_pair_ref[0] = _encode_cond_pair(
-                prompt_text[0], timbre_latent,
-                bpm_ref[0], duration_ref[0], key_ref[0],
-                time_sig_ref[0],
+            state.timbre_latent = timbre_latent
+            state.timbre_name = name
+            state.cond_pair = _encode_cond_pair(
+                state.prompt_text, timbre_latent,
+                state.bpm, state.duration, state.key,
+                state.time_signature,
             )
             # Re-encode B against the new timbre too — otherwise a non-
             # zero prompt blend would suddenly mix in B's *old-timbre*
             # conditioning the instant the user uploads a new ref.
-            if prompt_text_b[0] != prompt_text[0]:
-                cond_pair_b_ref[0] = _encode_cond_pair(
-                    prompt_text_b[0], timbre_latent,
-                    bpm_ref[0], duration_ref[0], key_ref[0],
-                    time_sig_ref[0],
+            if state.prompt_text_b != state.prompt_text:
+                state.cond_pair_b = _encode_cond_pair(
+                    state.prompt_text_b, timbre_latent,
+                    state.bpm, state.duration, state.key,
+                    state.time_signature,
                 )
             else:
-                cond_pair_b_ref[0] = cond_pair_ref[0]
+                state.cond_pair_b = state.cond_pair
             _refresh_conditioning()
             return clip_s
         except Exception:
-            timbre_latent_ref[0] = prev_timbre_latent
-            timbre_name_ref[0] = prev_timbre_name
-            cond_pair_ref[0] = prev_cond_pair
-            cond_pair_b_ref[0] = prev_cond_pair_b
+            state.timbre_latent = prev_timbre_latent
+            state.timbre_name = prev_timbre_name
+            state.cond_pair = prev_cond_pair
+            state.cond_pair_b = prev_cond_pair_b
             stream.conditioning = prev_stream_cond
             raise
 
@@ -1125,17 +1032,17 @@ def _handle_client_body(
         raises on any mid-flight failure. Caller sends the ack."""
         s_wf = s_wf[:2]
         try:
-            struct_audio_ref[0] = s_wf
-            struct_name_ref[0] = name
+            state.struct_audio = s_wf
+            state.struct_name = name
             clip_s = s_wf.shape[-1] / SAMPLE_RATE
-            target_s = playback_samples_ref[0] / SAMPLE_RATE
+            target_s = state.playback_samples / SAMPLE_RATE
             _apply_struct_override()
             return clip_s, target_s
         except Exception:
-            struct_audio_ref[0] = None
-            struct_context_ref[0] = None
-            struct_name_ref[0] = None
-            stream.source = source_ref[0]
+            state.struct_audio = None
+            state.struct_context = None
+            state.struct_name = None
+            stream.source = state.source
             raise
 
     # Client mirror: tracks what audio the client currently has. Replaced
@@ -1144,50 +1051,18 @@ def _handle_client_body(
     client_mirror_ref = [src_np.copy()]
     zctx = zstd.ZstdCompressor(level=1)
 
-    # Source-swap rendezvous between the recv thread (sets pending) and
-    # the runner thread (consumes pending in before_tick). The recv loop
-    # only stages audio bytes here; all GPU work happens on the runner
-    # thread so we don't race the streaming pipeline.
-    swap_pending: dict = {"bytes": None, "tags": None}
-    swap_lock = threading.Lock()
-
-    # Cross-thread LoRA mutation rendezvous.  The recv thread enqueues
-    # ids; the runner thread drains the queues in before_tick so the
-    # refit (which mutates engine state) is serialized with inference.
-    #
-    # pending_enable items are (id, strength_or_None) tuples — strength
-    # is the target the LoRA should be at when the refit fires, applied
-    # in a single transition.  Enabling at 0 and ramping up via the
-    # next per-tick set_strength causes the first decode window to
-    # sound like the LoRA is missing (the streaming pipeline depth
-    # spans several decoded seconds), so callers should always supply
-    # the target strength when they have it.
-    pending_enable: list[tuple[str, float | None]] = []
-    pending_disable: list[str] = []
-    pending_lock = threading.Lock()
-
-    # Live pipeline_depth retune. The StreamPipeline ring buffer can be
-    # resized between ticks; doing it from the recv thread would race the
-    # ongoing tick (slots may be mid-step), so we stash the target depth
-    # here and the runner thread applies it inside before_tick. A single
-    # slot is enough — a fresh value just replaces any unapplied one.
-    pending_depth_ref: list[int | None] = [None]
-    pending_depth_lock = threading.Lock()
-    current_depth_ref: list[int] = [int(depth)]
-
-    # Last meaningful-activity timestamp. Read by PipelineRunner to
-    # decide whether to skip the DiT tick this iteration. The web client
-    # resends a full ``params`` message every 8 ms via useParamSync
-    # (mirrors DEMON's _sendTick — the engine samples params at the
-    # start of each generation window, so the client floods them even
-    # when nothing changed). Treating that flood as "activity" defeats
-    # the pause entirely. Instead, ``params`` messages bump the timer
-    # only when their ``raw`` dict differs from the previous one;
-    # all other message types are discrete actions and always bump.
-    # Plain list-wrapped float / dict: atomic enough under the GIL for
-    # this single-slot rendezvous.
-    last_activity_ts: list[float] = [time.monotonic()]
-    _last_params_raw_ref: list = [None]
+    # Cross-thread rendezvous queues now live on the SessionState above:
+    # ``state.state.swap_pending`` for the source-swap recv handoff,
+    # ``state.state.pending_enable`` / ``state.state.pending_disable`` for LoRA
+    # mutation, ``state.pending_depth`` for live depth retune. All four
+    # are drained on the runner thread inside before_tick, and the
+    # recv-side mutations take ``state._lock``. ``state.current_depth``
+    # tracks the active value the StreamPipeline ring buffer was sized
+    # to. ``state.last_activity_ts`` is the idle-pause input the runner
+    # reads each tick; the dispatcher bumps it only on meaningful
+    # ``params`` messages (raw dict differs from
+    # ``state.last_params_raw``) so the 125 Hz heartbeat doesn't
+    # defeat the pause.
 
     def _send_catalog_update():
         try:
@@ -1197,16 +1072,16 @@ def _handle_client_body(
                     "catalog": _catalog_payload(),
                 }))
         except ConnectionClosed:
-            running[0] = False
+            state.running = False
 
     def apply_lora_pending():
         if not lora_available:
             return
-        with pending_lock:
-            local_disable = pending_disable[:]
-            local_enable = pending_enable[:]
-            pending_disable.clear()
-            pending_enable.clear()
+        with state._lock:
+            local_disable = state.pending_disable[:]
+            local_enable = state.pending_enable[:]
+            state.pending_disable.clear()
+            state.pending_enable.clear()
         if not local_disable and not local_enable:
             return
         for lid in local_disable:
@@ -1288,16 +1163,16 @@ def _handle_client_body(
         hdr = struct.pack(
             SLICE_HDR_FMT,
             SLICE_FLAG_DELTA,
-            ss, se - ss, n_channels_ref[0],
-            params.get("tick_ms", 0), params.get("dec_ms", 0),
-            params.get("num_gens", 0),
+            ss, se - ss, state.n_channels,
+            state.params.get("tick_ms", 0), state.params.get("dec_ms", 0),
+            state.params.get("num_gens", 0),
         )
         try:
             with send_lock:
                 ws.send(hdr + compressed)
-                ws.send(json.dumps({"type": "params_update", "params": dict(params)}))
+                ws.send(json.dumps({"type": "params_update", "params": dict(state.params)}))
         except ConnectionClosed:
-            running[0] = False
+            state.running = False
 
     # --- Control bus ---
     # External commands (from the demo's onboard MCP server) land in this
@@ -1317,20 +1192,20 @@ def _handle_client_body(
     def snapshot_session() -> dict:
         return {
             "id": session_id,
-            "prompt": prompt_text[0],
-            "prompt_b": prompt_text_b[0],
-            "prompt_blend": prompt_blend_ref[0],
-            "duration": duration_ref[0],
-            "bpm": bpm_ref[0],
-            "key": key_ref[0],
-            "time_signature": time_sig_ref[0],
+            "prompt": state.prompt_text,
+            "prompt_b": state.prompt_text_b,
+            "prompt_blend": state.prompt_blend,
+            "duration": state.duration,
+            "bpm": state.bpm,
+            "key": state.key,
+            "time_signature": state.time_signature,
             "fixture_name": fixture_name,
-            "timbre_name": timbre_name_ref[0],
-            "timbre_strength": timbre_strength_ref[0],
-            "structure_name": struct_name_ref[0],
+            "timbre_name": state.timbre_name,
+            "timbre_strength": state.timbre_strength,
+            "structure_name": state.struct_name,
             "lora_catalog": _catalog_payload(),
             "knob_values": virtual_knobs.get_all_values(),
-            "channels": n_channels_ref[0],
+            "channels": state.n_channels,
             "sample_rate": SAMPLE_RATE,
         }
 
@@ -1415,9 +1290,9 @@ def _handle_client_body(
         # user input.
         if mtype == "params":
             _new_raw = data.get("raw") or {}
-            if _new_raw != _last_params_raw_ref[0]:
-                last_activity_ts[0] = time.monotonic()
-                _last_params_raw_ref[0] = dict(_new_raw)
+            if _new_raw != state.last_params_raw:
+                state.last_activity_ts = time.monotonic()
+                state.last_params_raw = dict(_new_raw)
                 # DEBUG so 125 Hz heartbeats stay invisible at INFO; surfaces
                 # the actual knob diffs when DEMON_LOG_LEVEL=DEBUG. Logs
                 # post-diff so we don't fire on the no-op heartbeat.
@@ -1426,7 +1301,7 @@ def _handle_client_body(
                     source, sorted(_new_raw.keys()),
                 )
         else:
-            last_activity_ts[0] = time.monotonic()
+            state.last_activity_ts = time.monotonic()
         if mtype == "params":
             raw = data.get("raw") or {}
             if source == "control":
@@ -1446,7 +1321,7 @@ def _handle_client_body(
                             "raw": dict(raw),
                         }))
                 except ConnectionClosed:
-                    running[0] = False
+                    state.running = False
                 except Exception:
                     pass
             else:
@@ -1482,29 +1357,29 @@ def _handle_client_body(
         elif mtype == "prompt":
             ts_override = _normalize_time_signature(data.get("time_signature"))
             if ts_override is not None:
-                time_sig_ref[0] = ts_override
+                state.time_signature = ts_override
             refer = _active_refer_latent()
-            key_used = data.get("key") or key_ref[0]
+            key_used = data.get("key") or state.key
             logger.info(
                 "prompt_set origin={} tags={!r} tags_b={!r} key={} time_signature={}",
                 source, data.get("tags"), data.get("tags_b"),
-                key_used, time_sig_ref[0],
+                key_used, state.time_signature,
             )
-            cond_pair_ref[0] = _encode_cond_pair(
-                data["tags"], refer, bpm_ref[0], duration_ref[0],
-                key_used, time_sig_ref[0],
+            state.cond_pair = _encode_cond_pair(
+                data["tags"], refer, state.bpm, state.duration,
+                key_used, state.time_signature,
             )
-            prompt_text[0] = data["tags"]
+            state.prompt_text = data["tags"]
             tags_b = data.get("tags_b")
             if tags_b and tags_b != data["tags"]:
-                cond_pair_b_ref[0] = _encode_cond_pair(
-                    tags_b, refer, bpm_ref[0], duration_ref[0],
-                    key_used, time_sig_ref[0],
+                state.cond_pair_b = _encode_cond_pair(
+                    tags_b, refer, state.bpm, state.duration,
+                    key_used, state.time_signature,
                 )
-                prompt_text_b[0] = tags_b
+                state.prompt_text_b = tags_b
             else:
-                cond_pair_b_ref[0] = cond_pair_ref[0]
-                prompt_text_b[0] = data["tags"]
+                state.cond_pair_b = state.cond_pair
+                state.prompt_text_b = data["tags"]
             _refresh_conditioning()
             try:
                 with send_lock:
@@ -1513,7 +1388,7 @@ def _handle_client_body(
                         "tags": data["tags"],
                     }))
             except ConnectionClosed:
-                running[0] = False
+                state.running = False
         elif mtype == "set_prompt_blend":
             try:
                 v = float(data.get("value", 0.0))
@@ -1532,11 +1407,11 @@ def _handle_client_body(
                             "value": v,
                         }))
                 except ConnectionClosed:
-                    running[0] = False
+                    state.running = False
                 except Exception:
                     pass
             else:
-                prompt_blend_ref[0] = v
+                state.prompt_blend = v
                 _refresh_conditioning()
                 # DEBUG because the browser tween fires many updates per
                 # slider drag — INFO would flood any active session.
@@ -1549,8 +1424,8 @@ def _handle_client_body(
             except (TypeError, ValueError):
                 return
             v = max(MIN_PIPELINE_DEPTH, min(v, max_pipeline_depth))
-            with pending_depth_lock:
-                pending_depth_ref[0] = v
+            with state._lock:
+                state.pending_depth = v
             logger.info(
                 "set_depth_requested origin={} value={}", source, v,
             )
@@ -1562,8 +1437,8 @@ def _handle_client_body(
             except (TypeError, ValueError):
                 strength = None
             if lid:
-                with pending_lock:
-                    pending_enable.append((str(lid), strength))
+                with state._lock:
+                    state.pending_enable.append((str(lid), strength))
                 logger.info(
                     "enable_lora_requested origin={} id={} strength={}",
                     source, lid, strength,
@@ -1571,8 +1446,8 @@ def _handle_client_body(
         elif mtype == "disable_lora":
             lid = data.get("id")
             if lid:
-                with pending_lock:
-                    pending_disable.append(str(lid))
+                with state._lock:
+                    state.pending_disable.append(str(lid))
                 logger.info(
                     "disable_lora_requested origin={} id={}", source, lid,
                 )
@@ -1582,7 +1457,7 @@ def _handle_client_body(
             except (TypeError, ValueError):
                 v = 1.0
             v = max(0.0, min(1.0, v))
-            timbre_strength_ref[0] = v
+            state.timbre_strength = v
             _refresh_conditioning()
             # DEBUG — slider drag fires many updates per gesture.
             logger.debug(
@@ -1596,7 +1471,7 @@ def _handle_client_body(
             try:
                 audio_msg = recv_audio()
             except ConnectionClosed:
-                running[0] = False
+                state.running = False
                 return
             logger.debug(
                 "set_timbre_source_bytes_received name={} bytes={}",
@@ -1618,22 +1493,22 @@ def _handle_client_body(
                 "fixture",
             )
         elif mtype == "clear_timbre_source":
-            timbre_latent_ref[0] = None
-            timbre_name_ref[0] = None
-            refer = source_ref[0].latent
-            cond_pair_ref[0] = _encode_cond_pair(
-                prompt_text[0], refer,
-                bpm_ref[0], duration_ref[0], key_ref[0],
-                time_sig_ref[0],
+            state.timbre_latent = None
+            state.timbre_name = None
+            refer = state.source.latent
+            state.cond_pair = _encode_cond_pair(
+                state.prompt_text, refer,
+                state.bpm, state.duration, state.key,
+                state.time_signature,
             )
-            if prompt_text_b[0] != prompt_text[0]:
-                cond_pair_b_ref[0] = _encode_cond_pair(
-                    prompt_text_b[0], refer,
-                    bpm_ref[0], duration_ref[0], key_ref[0],
-                    time_sig_ref[0],
+            if state.prompt_text_b != state.prompt_text:
+                state.cond_pair_b = _encode_cond_pair(
+                    state.prompt_text_b, refer,
+                    state.bpm, state.duration, state.key,
+                    state.time_signature,
                 )
             else:
-                cond_pair_b_ref[0] = cond_pair_ref[0]
+                state.cond_pair_b = state.cond_pair
             _refresh_conditioning()
             try:
                 with send_lock:
@@ -1650,7 +1525,7 @@ def _handle_client_body(
             try:
                 audio_msg = recv_audio()
             except ConnectionClosed:
-                running[0] = False
+                state.running = False
                 return
             logger.debug(
                 "set_structure_source_bytes_received name={} bytes={}",
@@ -1680,23 +1555,23 @@ def _handle_client_body(
                 pass
             logger.info("structure_cleared origin={}", source)
         elif mtype == "swap_source":
-            tags = data.get("tags") or prompt_text[0]
+            tags = data.get("tags") or state.prompt_text
             try:
                 audio_msg = recv_audio()
             except ConnectionClosed:
-                running[0] = False
+                state.running = False
                 return
-            with swap_lock:
-                swap_pending["bytes"] = audio_msg
-                swap_pending["tags"] = tags
-                swap_pending["key"] = data.get("key")
-                swap_pending["time_signature"] = (
+            with state._lock:
+                state.swap_pending["bytes"] = audio_msg
+                state.swap_pending["tags"] = tags
+                state.swap_pending["key"] = data.get("key")
+                state.swap_pending["time_signature"] = (
                     _normalize_time_signature(
                         data.get("time_signature")
                     )
                 )
-                swap_pending["fixture_name"] = data.get("fixture_name")
-                swap_pending["stem_source_mode"] = (
+                state.swap_pending["fixture_name"] = data.get("fixture_name")
+                state.swap_pending["stem_source_mode"] = (
                     normalize_stem_source_mode(
                         data.get("stem_source_mode")
                     )
@@ -1710,7 +1585,7 @@ def _handle_client_body(
 
     # --- recv loop: drain WS + control bus into _dispatch_message ---
     def recv_loop():
-        while running[0]:
+        while state.running:
             try:
                 while True:
                     msg = ws.recv(timeout=0.001)
@@ -1725,16 +1600,16 @@ def _handle_client_body(
                             logger.exception(
                                 "ws_dispatch_error error={}", exc,
                             )
-                    if not running[0]:
+                    if not state.running:
                         break
             except TimeoutError:
                 pass
             except ConnectionClosed:
-                running[0] = False
+                state.running = False
                 break
             except Exception as exc:
                 logger.exception("recv_loop_error error={}", exc)
-                running[0] = False
+                state.running = False
                 break
 
             # Drain the MCP / external control bus. Audio bytes (if any)
@@ -1788,33 +1663,33 @@ def _handle_client_body(
     # started at session setup is likely complete by now; any leftover
     # work is awaited synchronously inside enable_lora.
     if use_lora and initial_enable_ids:
-        with pending_lock:
+        with state._lock:
             for lid in initial_enable_ids:
-                pending_enable.append(
+                state.pending_enable.append(
                     (lid, lora_strengths_init.get(lid)),
                 )
 
     # --- Source swap (runs on the runner thread via before_tick) ---
     def apply_swap_if_pending():
-        with swap_lock:
-            audio_msg = swap_pending.get("bytes")
-            tags = swap_pending.get("tags")
-            requested_key = swap_pending.get("key")
-            requested_time_sig = swap_pending.get("time_signature")
-            new_fixture_name = swap_pending.get("fixture_name")
+        with state._lock:
+            audio_msg = state.swap_pending.get("bytes")
+            tags = state.swap_pending.get("tags")
+            requested_key = state.swap_pending.get("key")
+            requested_time_sig = state.swap_pending.get("time_signature")
+            new_fixture_name = state.swap_pending.get("fixture_name")
             new_stem_source_mode = resolve_upload_stem_source_mode(
                 new_fixture_name,
-                swap_pending.get("stem_source_mode"),
+                state.swap_pending.get("stem_source_mode"),
                 known_fixtures=KNOWN_FIXTURES,
             )
             if audio_msg is None:
                 return
-            swap_pending["bytes"] = None
-            swap_pending["tags"] = None
-            swap_pending["key"] = None
-            swap_pending["time_signature"] = None
-            swap_pending["fixture_name"] = None
-            swap_pending["stem_source_mode"] = None
+            state.swap_pending["bytes"] = None
+            state.swap_pending["tags"] = None
+            state.swap_pending["key"] = None
+            state.swap_pending["time_signature"] = None
+            state.swap_pending["fixture_name"] = None
+            state.swap_pending["stem_source_mode"] = None
         # Initialized to None so the finally below can None-guard cleanly
         # in the (rare) case an exception fires between the start of the
         # try and the contextualize bind.
@@ -1920,11 +1795,11 @@ def _handle_client_body(
             # the new playback source's own latent. Override persists
             # across source swaps.
             stream.source = new_source
-            source_ref[0] = new_source
-            playback_samples_ref[0] = int(new_wf.shape[-1])
-            tl = timbre_latent_ref[0]
+            state.source = new_source
+            state.playback_samples = int(new_wf.shape[-1])
+            tl = state.timbre_latent
             refer = tl if tl is not None else new_source.latent
-            cond_pair_ref[0] = _encode_cond_pair(
+            state.cond_pair = _encode_cond_pair(
                 tags,
                 refer,
                 new_bpm, new_audio_duration_s, new_key, new_time_sig,
@@ -1932,21 +1807,21 @@ def _handle_client_body(
             # Carry promptB across the swap so the blend slider keeps
             # its meaning. If B was identical to A pre-swap, keep it
             # mirrored to skip a second encode pass.
-            if prompt_text_b[0] != prompt_text[0]:
-                cond_pair_b_ref[0] = _encode_cond_pair(
-                    prompt_text_b[0],
+            if state.prompt_text_b != state.prompt_text:
+                state.cond_pair_b = _encode_cond_pair(
+                    state.prompt_text_b,
                     refer,
                     new_bpm, new_audio_duration_s, new_key, new_time_sig,
                 )
             else:
-                cond_pair_b_ref[0] = cond_pair_ref[0]
-                prompt_text_b[0] = tags
+                state.cond_pair_b = state.cond_pair
+                state.prompt_text_b = tags
             stream.context_latent = new_source.context_latent
             # Re-derive structure override against the new source length.
             # On failure (e.g. VAE engine couldn't fit the new clip), drop
             # the override rather than block the swap — the user can re-
             # upload after the swap settles.
-            if struct_audio_ref[0] is not None:
+            if state.struct_audio is not None:
                 try:
                     _apply_struct_override()
                 except Exception as exc:
@@ -1962,11 +1837,11 @@ def _handle_client_body(
                             }))
                     except Exception:
                         pass
-            bpm_ref[0] = new_bpm
-            key_ref[0] = new_key
-            time_sig_ref[0] = new_time_sig
-            duration_ref[0] = new_audio_duration_s
-            prompt_text[0] = tags
+            state.bpm = new_bpm
+            state.key = new_key
+            state.time_signature = new_time_sig
+            state.duration = new_audio_duration_s
+            state.prompt_text = tags
             _refresh_conditioning()
             r = runner_holder[0]
             if r is not None:
@@ -1983,7 +1858,7 @@ def _handle_client_body(
 
             new_src_np = new_wf.numpy().T
             new_n_channels = new_src_np.shape[1] if new_src_np.ndim > 1 else 1
-            n_channels_ref[0] = new_n_channels
+            state.n_channels = new_n_channels
             client_mirror_ref[0] = new_src_np.copy()
             audio_eng.swap(new_src_np)
             audio_eng.position = 0
@@ -2030,7 +1905,7 @@ def _handle_client_body(
                 len(new_src_np) / SAMPLE_RATE,
             )
         except ConnectionClosed:
-            running[0] = False
+            state.running = False
         except Exception as exc:
             logger.opt(exception=True).error(
                 "source_swap_error error={}", exc,
@@ -2054,23 +1929,23 @@ def _handle_client_body(
                     pass
 
     def apply_depth_pending():
-        with pending_depth_lock:
-            target = pending_depth_ref[0]
-            pending_depth_ref[0] = None
-        if target is None or target == current_depth_ref[0]:
+        with state._lock:
+            target = state.pending_depth
+            state.pending_depth = None
+        if target is None or target == state.current_depth:
             return
         pipe = stream.pipeline
         if pipe is None:
             # First tick hasn't built the pipeline yet — re-queue and try
             # again next iteration. set_depth on a missing pipeline would
             # silently no-op.
-            with pending_depth_lock:
-                if pending_depth_ref[0] is None:
-                    pending_depth_ref[0] = target
+            with state._lock:
+                if state.pending_depth is None:
+                    state.pending_depth = target
             return
         try:
             pipe.set_depth(target)
-            current_depth_ref[0] = pipe.depth
+            state.current_depth = pipe.depth
             logger.info("pipeline_depth_applied depth={}", pipe.depth)
         except Exception as exc:
             logger.exception(
@@ -2081,10 +1956,10 @@ def _handle_client_body(
             with send_lock:
                 ws.send(json.dumps({
                     "type": "depth_applied",
-                    "value": current_depth_ref[0],
+                    "value": state.current_depth,
                 }))
         except ConnectionClosed:
-            running[0] = False
+            state.running = False
         except Exception:
             pass
 
@@ -2100,17 +1975,14 @@ def _handle_client_body(
     # --- PipelineRunner: the SAME code as local ---
     runner = PipelineRunner(
         session, stream, audio_eng,
-        last_activity_ts=last_activity_ts,
+        state=state,
         idle_threshold_s=IDLE_PAUSE_S,
-        use_midi=True,  # always "MIDI" mode; VirtualMidiKnobs provides values
+        use_midi=True,  # always "MIDI" mode; KnobState provides values
         use_sde=use_sde, use_lora=use_lora,
         midi_knobs=virtual_knobs,
         engine_obj=engine_obj,
         vae_window=vae_window, crop_seconds=crop_seconds,
         k1_name=k1_name, seed=1528, skip_threshold=5e-4,
-        sde_curve_display=sde_curve_display, params=params,
-        prompt_text=prompt_text, running=running,
-        motion_val=motion_val, motion_lock=motion_lock,
         on_audio_ready=on_audio_ready,
         before_tick=apply_pending,
         walk_window=walk_window,
@@ -2125,12 +1997,12 @@ def _handle_client_body(
     except Exception as exc:
         logger.opt(exception=True).error("pipeline_error error={}", exc)
     finally:
-        running[0] = False
+        state.running = False
         session_registry.unregister(session_id)
         recv_t.join(timeout=2)
         logger.info(
             "client_disconnected num_gens={}",
-            params.get("num_gens", 0),
+            state.params.get("num_gens", 0),
         )
 
         # Tear down per-session GPU state. Order matters: stream.close()
