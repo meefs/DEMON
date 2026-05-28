@@ -314,19 +314,16 @@ The calibration scripts dispatch on `--checkpoint`: XL writes to
 `<MODELS_DIR>/calibration/decoder_xl_fp8/<dur>s/`, 2B writes to
 `<MODELS_DIR>/calibration/decoder_2b_fp8/`.
 
-Validated XL recipe at B=4 T=1500 L_enc=200, RTX 5090, TRT 10.16
-(original 60s cal2 numbers; 120s / 240s use their own per-profile JSONs
-with comparable scales):
-
-- bf16_mixed: 142.8 ms / 7.0 steps/s / 7.8 GB engine
-- fp8_mixed (W8A8 absmax): 91.4 ms / 10.9 steps/s / 4.0 GB engine
-- Speedup: **1.56x**, engine size **0.52x**
-- Quality: cosine sim 0.957-0.981 across calibration batches.
+Qualitative validated XL behavior at B=4, RTX 5090, TRT 10.16: FP8
+W8A8 is meaningfully faster and roughly half the engine size compared
+with bf16_mixed at matching quality (cosine similarity stays in the
+high-0.9s against the bf16 engine on calibration batches). See the
+DEMON paper for canonical benchmark numbers; the README perf table
+covers the 2B turbo configuration.
 
 The 2B turbo decoder's bf16-hybrid recipe already routes Linears
-through fp16 tensor cores, so FP8 on 2B only adds ~1.08x over the
-hybrid baseline (see `archive/ryanontheinside/fp8-2b-research-vram`).
-FP8 is most useful on 2B as a VRAM win, not a latency win.
+through fp16 tensor cores, so FP8 on 2B is most useful as a VRAM
+win, not a latency win (see `archive/ryanontheinside/fp8-2b-research-vram`).
 
 ## Engine Naming
 
@@ -363,31 +360,6 @@ vae_decode_fp16_3to30s.engine
 The `mixed` tag means the TensorRT network is strongly typed and follows the
 dtypes encoded in the ONNX graph. For XL `bf16_mixed`, that includes bf16 bulk
 compute plus the fp32 deconvolution island.
-
-## Current Local Build Results
-
-The following artifacts have been built and validated locally:
-
-- `decoder_mixed_refit_b8_60s`: 2B turbo decoder, about 3299.6 MB.
-- `decoder_mixed_refit_b8_120s`: 2B turbo decoder, about 3299.4 MB.
-- `decoder_xl-turbo_fp8_refit_b4_60s`: XL turbo decoder, FP8 W8A8 (canonical).
-- `decoder_xl-turbo_fp8_refit_b4_120s`: XL turbo decoder, FP8 W8A8 (canonical).
-- `decoder_xl-turbo_fp8_refit_b4_240s`: XL turbo decoder, FP8 W8A8 (canonical).
-- `decoder_xl-turbo_mixed_refit_b4_60s`: XL turbo decoder, bf16_mixed (calibration driver).
-- `decoder_xl-turbo_mixed_refit_b4_120s`: XL turbo decoder, bf16_mixed (calibration driver).
-- `decoder_xl-turbo_mixed_refit_b4_240s`: XL turbo decoder, bf16_mixed (calibration driver).
-- `vae_decode_fp16_60s`: VAE decode, about 179.4 MB.
-- `vae_decode_fp16_120s`: VAE decode, about 347.2 MB.
-- `vae_decode_fp16_3to30s`: windowed VAE decode, about 269.1 MB.
-- `vae_encode_fp16_60s`: VAE encode, about 172.3 MB.
-- `vae_encode_fp16_120s`: VAE encode, about 172.4 MB.
-
-Recent build timings on the RTX 4090:
-
-- 2B turbo 120s decoder: about 130 seconds.
-- XL turbo 60s decoder: about 199 seconds after ONNX export.
-- XL turbo 120s decoder: about 199 seconds, reusing the XL ONNX.
-- XL turbo refit ONNX export: about 476 seconds.
 
 ## Building ACE-Step 1.5 XL Turbo
 
