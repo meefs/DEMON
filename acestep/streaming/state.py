@@ -26,9 +26,13 @@ from typing import Any
 
 
 def _default_swap_pending() -> dict:
-    """Empty swap_pending slot. Mirrors the shape callers expect."""
+    """Empty swap_pending slot. Mirrors the shape callers expect.
+
+    ``waveform`` is a decoded ``torch.Tensor`` ([≤2, N], float32): the
+    transport-edge byte decode lives in the WS adapter so the
+    runner-side drain consumes a value object, not wire bytes."""
     return {
-        "bytes": None,
+        "waveform": None,
         "tags": None,
         "key": None,
         "time_signature": None,
