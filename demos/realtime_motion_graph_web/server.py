@@ -121,12 +121,15 @@ def _process_request(connection, request):
     # API: server-info — lets the client know whether the backend is up.
     if path_only == "/api/server-info":
         # Surface startup-warmup state so the pool can gate "free" on a
-        # warmed engine. Read only if backend is already imported — don't
-        # force the heavy import in --no-backend mode.
+        # warmed engine. Read only if the warmup module is already
+        # imported — don't force the heavy chain in --no-backend mode
+        # (importing acestep.streaming.warmup is cheap on its own, but
+        # the warmup state is only populated once the backend imports
+        # and runs).
         _warm = None
-        _be = sys.modules.get("demos.realtime_motion_graph_web.backend")
-        if _be is not None:
-            _warm = getattr(_be, "WARMUP_STATE", None)
+        _wm = sys.modules.get("acestep.streaming.warmup")
+        if _wm is not None:
+            _warm = getattr(_wm, "WARMUP_STATE", None)
         body = json.dumps({
             "no_backend": _NO_BACKEND,
             "kiosk": _KIOSK,
@@ -481,9 +484,12 @@ def main():
         # routed real users until it's warm. Disable with
         # DEMON_STARTUP_WARMUP=0.
         if os.environ.get("DEMON_STARTUP_WARMUP", "1") != "0":
-            from .backend import run_startup_warmup
+            from acestep.streaming.warmup import run_startup_warmup
 
+            # handle_client is injected so warmup stays free of demo
+            # imports; see acestep.streaming.warmup.run_startup_warmup.
             run_startup_warmup(
+                handle_client,
                 decoder_backend=decoder_accel,
                 vae_backend=vae_accel,
                 checkpoint=checkpoint,
