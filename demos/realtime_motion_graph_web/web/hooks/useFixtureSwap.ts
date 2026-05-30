@@ -54,20 +54,33 @@ export function useFixtureSwap() {
       if (!force && lastSwappedTo.current === name) return;
 
       const { setStatus } = useSessionStore.getState();
-      setStatus("ready", `Loading ${name}…`);
 
-      let interleaved: Float32Array;
-      let channels: number;
-      try {
-        const decoded = await loadFixtureAudio(name);
-        interleaved = decoded.interleaved;
-        channels = decoded.channels;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setStatus("ready", `Load failed: ${msg}`);
-        return;
+      // Server-resident tracks (built-in fixtures + persisted uploads)
+      // swap by name: the pod loads the waveform off its own disk so the
+      // sidecar + stem caches hit, instead of the browser decoding the
+      // file and re-uploading PCM only for the server to re-encode and
+      // re-rip stems. The playback buffer still comes back in the
+      // swap_ready echo. Only tracks that live solely in browser memory
+      // (no-pod fallback, MCP mirror) take the decode + upload path.
+      const serverResident = useCustomTracksStore
+        .getState()
+        .isServerResident(name);
+
+      let interleaved: Float32Array | null = null;
+      let channels = 0;
+      if (!serverResident) {
+        setStatus("ready", `Loading ${name}…`);
+        try {
+          const decoded = await loadFixtureAudio(name);
+          interleaved = decoded.interleaved;
+          channels = decoded.channels;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setStatus("ready", `Load failed: ${msg}`);
+          return;
+        }
+        if (cancelled) return;
       }
-      if (cancelled) return;
 
       setStatus("ready", `Swapping to ${name}…`);
 
@@ -197,15 +210,23 @@ export function useFixtureSwap() {
         // fixture's sidecar.key on the server side.
         // Operator overrides flow through the OperatorStrip dropdown's
         // onChange handler (sendPrompt), not through swap_source.
-        const sent = remote.sendSwapSource(
-          interleaved,
-          channels,
-          perf.promptA,
-          undefined,
-          name,
-          undefined,
-          sourceMode,
-        );
+        const sent = serverResident
+          ? remote.sendSwapSourceByName(
+              name,
+              perf.promptA,
+              undefined,
+              undefined,
+              sourceMode,
+            )
+          : remote.sendSwapSource(
+              interleaved as Float32Array,
+              channels,
+              perf.promptA,
+              undefined,
+              name,
+              undefined,
+              sourceMode,
+            );
         if (!sent) {
           remote.removeEventListener("swap_ready", onReady);
           remote.removeEventListener("swap_failed", onFail);
